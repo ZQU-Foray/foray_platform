@@ -1,0 +1,10 @@
+# 本仓在算法结构中的位置
+# 见 foray_docs/algorithm_structure.md §1
+#
+# CI 据此校验：
+#   - 不得依赖比 layer 更高的层
+#   - 不得依赖装配根仓 foray_robots
+#   - foray_interfaces 不得依赖任何自研仓
+
+layer: L1
+depends_on_layers: [X2]

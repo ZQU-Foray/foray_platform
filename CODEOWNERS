@@ -1,0 +1,9 @@
+# CODEOWNERS — Review 自动分派
+#
+# 本仓 owner 角色：平台（见 foray_docs/repository_structure.md §2）
+# 组织当前只有 算法组 / 电控组 两个 team，故先全部指向 算法组；
+# 将来若建立 架构/平台/导航/视觉/决策/集成 子 team，改为对应 team。
+#
+# 注意：被引用的 team 必须对本仓有 Write 权限，否则静默失效。
+
+*       @ZQU-Foray/算法组

@@ -1,0 +1,173 @@
+# 复制自组织 CI 模板：ZQU-Foray/.github → workflows/ci-template.yml
+# 各作业先探测适用文件是否存在，不存在即跳过（空仓也能绿灯）。
+# 本仓可按实际技术栈调整；不适用的作业可直接删除。
+#
+# 设计原则：**空仓库必须绿灯**。
+#   每个作业先探测自己适用的文件是否存在，不存在就跳过。
+#   这样新仓在初始化当天就能接入 CI，而不会因为「还没有代码」而长期红着
+#   —— 长期的红灯会让人习惯性忽略 CI，等于没有 CI。
+#
+# 更新记录：
+#   - 增加 ROS 2 (colcon) 构建与测试作业；仓库内无 ROS 2 package 时自动跳过，
+#     因此可安全地保留在通用模板中，不影响纯 Python / 纯 C 仓库。
+#   - 为 lint-python / lint-c / test-python 补上同样的探测与跳过逻辑。
+#     修正原模板在空仓库上必然失败的两处：
+#       1) `pip install -r requirements.txt` —— 文件不存在时直接报错退出；
+#       2) `find ... | xargs clang-format` —— 空输入时 xargs 仍会执行一次无参命令。
+#   - 修正 find 的 -o 与 -not 优先级问题（补括号），并为 xargs 加 -r / -print0。
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  # ---- Python 代码检查 ----
+  lint-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检测是否存在 Python 代码
+        id: detect
+        shell: bash
+        run: |
+          if find . -name '*.py' -not -path './.git/*' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "未发现 Python 代码，跳过。"
+          fi
+
+      - name: Set up Python
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          pip install ruff black
+
+      - name: Lint with ruff
+        if: steps.detect.outputs.found == 'true'
+        run: ruff check .
+
+      - name: Format check with black
+        if: steps.detect.outputs.found == 'true'
+        run: black --check --diff .
+
+  # ---- C/C++ 格式检查 ----
+  lint-c:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检测是否存在 C/C++ 代码
+        id: detect
+        shell: bash
+        run: |
+          if find . \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) \
+               -not -path './.git/*' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "未发现 C/C++ 代码，跳过。"
+          fi
+
+      - name: Install clang-format
+        if: steps.detect.outputs.found == 'true'
+        run: sudo apt-get install -y clang-format
+
+      - name: Format check
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        run: |
+          find . \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) \
+            -not -path './.git/*' -print0 | \
+            xargs -0 -r clang-format --dry-run --Werror
+
+  # ---- Python 测试 ----
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检测是否存在 Python 测试
+        id: detect
+        shell: bash
+        run: |
+          if find . \( -name 'test_*.py' -o -name '*_test.py' \) \
+               -not -path './.git/*' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "未发现 Python 测试，跳过。"
+          fi
+
+      - name: Set up Python
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install pytest
+
+      - name: Run tests
+        if: steps.detect.outputs.found == 'true'
+        run: pytest -v
+
+  # ---- ROS 2 构建与测试 ----
+  # 适用于 colcon 工作空间仓库（如 foray_navigation）。
+  # 仓库内不存在 package.xml 时整个作业自动跳过，故可安全保留在通用模板里。
+  build-ros2:
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检测是否为 ROS 2 仓库
+        id: detect
+        shell: bash
+        run: |
+          if find . -name package.xml -not -path './.git/*' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "未发现 ROS 2 package，跳过 ROS 2 构建。"
+          fi
+
+      - name: 安装依赖 (rosdep)
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        run: |
+          apt-get update
+          rosdep update
+          rosdep install -y -r --from-paths . --ignore-src --rosdistro humble
+
+      - name: 构建 (colcon build)
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+      - name: 测试 (colcon test)
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_direct+
+          colcon test-result --verbose
