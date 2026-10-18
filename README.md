@@ -70,6 +70,7 @@ colcon test --event-handlers console_direct+
 | `foray/platform/param/param.hpp` | `foray::platform::param` | `ParamType` · `ParamValue` · `ParamSpec` · `ParamSchema` · `ParamSnapshot` · `ParamStore` · `ParamSource` · `MapParamSource` · `YamlFileParamSource` · `ParamManager` · `ParamResult` / `ParamError` | 类型化 schema + 校验 + 热加载；读路径为不可变快照，写路径在非实时线程整批原子生效 |
 | `foray/platform/result/result.hpp` | `foray::platform` | `ErrorCode` · `Error` · `Result<T>` · `Result<void>` | 公共 API 不抛异常；驱动原始错误码保存在 `Error::vendor_code` |
 | `foray/platform/container/spsc_queue.hpp` | `foray::platform::container` | `SpscQueue<T>` | 有界、无锁、单生产者/单消费者；满时 `try_push` 返回 false 并累计 `dropped()` |
+| `foray/platform/config/config.hpp` | `foray::platform::config` | `ConfigDocument` · `ConfigResolver` · `ConfigSnapshot` · `ConfigExporter` · `ConfigTool` · `MapEnvProvider` | 分层 YAML、include、`${ENV}`、`FORAY_<PARAM>` 覆盖、provenance；复用 `param` 做校验 |
 
 **时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 
@@ -128,6 +129,7 @@ colcon test --event-handlers console_direct+
 
 - [时间与时钟](docs/time_and_clock.md)——时钟域、`use_sim_time` 语义、急停时间源
 - [参数系统](docs/parameter_system.md)——schema、校验、YAML、热加载与线程模型
+- [统一配置解析栈](docs/config_stack.md)——分层、include、环境变量、来源追踪与导出
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 
 ## 参考

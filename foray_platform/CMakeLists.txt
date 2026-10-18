@@ -18,6 +18,7 @@ add_library(foray_platform_core
     src/result/error.cpp
     src/param/value.cpp
     src/param/result.cpp
+    src/param/yaml_utils.cpp
     src/param/validation.cpp
     src/param/schema.cpp
     src/param/snapshot.cpp
@@ -25,6 +26,9 @@ add_library(foray_platform_core
     src/param/source.cpp
     src/param/yaml_source.cpp
     src/param/manager.cpp
+    src/config/resolver.cpp
+    src/config/exporter.cpp
+    src/config/tool.cpp
 )
 add_library(foray_platform::core ALIAS foray_platform_core)
 
@@ -63,6 +67,8 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/param/store_test.cpp
         test/param/yaml_source_test.cpp
         test/param/manager_test.cpp
+        test/config/resolver_test.cpp
+        test/config/exporter_test.cpp
     )
     target_link_libraries(foray_platform_tests
         PRIVATE foray_platform_core GTest::gtest_main

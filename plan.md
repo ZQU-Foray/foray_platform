@@ -47,13 +47,26 @@
 - 单测：`foray_platform/test/container/spsc_queue_test.cpp`；
 - TSan 并发用例通过。
 
+### M3 交付物
+
+- `foray_platform/include/foray/platform/config/`
+  - `ConfigDocument` / `ConfigLayer`：分层与可选层；
+  - `ConfigResolver`：YAML 加载、顶层 `include`、`${ENV}` 替换、
+    `FORAY_<PARAM>` 覆盖、来源追踪；
+  - `ConfigSnapshot`：已校验值 + provenance；
+  - `ConfigExporter`：dump / Markdown schema / JSON Schema；
+  - `ConfigTool`：validate/dump/schema 门面（可执行文件待 HAL schema 落地）；
+- 复用 `param` 的 `ParamSchema` / `ParamValue` / `ParamStore` 做校验与宽化；
+- 设计说明：[docs/config_stack.md](docs/config_stack.md)；
+- 单测：`foray_platform/test/config/`；ASan/UBSan 通过。
+
 ## 当前 Agent State
 
-M2_DONE
+M3_DONE
 
 ## Before Snapshot
 
-commit hash:   fb6c309
+commit hash:   92a53ec
 branch:        feat/l1-foundation
 modified files: 包合并（foray_platform_core → foray_platform）；新增 result/；更新 README/tree/decision/ci/plan
 risk level:    L1
@@ -79,7 +92,7 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（80 个用例）
+- [x] 每个新增模块带独立可执行测试（98 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯
