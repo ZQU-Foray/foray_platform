@@ -10,7 +10,24 @@ L1 平台基础 + L2 下行 HAL
 
 ## 快速开始
 
-> 本仓处于**初始化状态**，尚无源码。以下流程随 P0/P1 落地逐步可用。
+> 当前已落地 L1 的时间/时钟抽象与参数系统（`foray_platform_core`，**不依赖 ROS**）。
+> L2 HAL 与 ROS 适配层尚未开始。
+
+### 仅构建核心库（无需 ROS）
+
+依赖：CMake ≥ 3.16、C++17 编译器、yaml-cpp；测试另需 GTest。
+
+```bash
+cmake -S foray_platform_core -B ~/.cache/foray-platform-build/core \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/.cache/foray-platform-build/core -j"$(nproc)"
+ctest --test-dir ~/.cache/foray-platform-build/core --output-on-failure
+```
+
+> ⚠️ 本仓位于 SMB 共享盘，构建目录必须放本地盘（共享盘不支持符号链接）。
+> 这是 `foray_ws` 元仓构建约定的同一条纪律。
+
+### 在 ROS 2 工作空间中构建
 
 ```bash
 # 1. 拉取（仓齐备后改为从元仓 foray_ws 一键拉取）
@@ -23,7 +40,10 @@ rosdep install -y -r --from-paths . --ignore-src --rosdistro humble
 # 3. 构建
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-# 4. 运行
+# 4. 测试
+colcon test --event-handlers console_direct+
+
+# 5. 运行
 # （待装配根就绪后补充）
 ```
 
@@ -32,7 +52,7 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 | 类型 | 依赖 |
 |---|---|
 | **自研仓** | X2 |
-| **第三方** | Eigen3 · ROS 2 Humble · 各传感器官方 SDK（Livox / Hikvision 等） |
+| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · 各传感器官方 SDK（Livox / Hikvision 等） |
 
 ## 接口
 
@@ -40,10 +60,10 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 | 模块 | 内容 |
 |---|---|
-| 时间与时钟 | 统一时钟源 · `use_sim_time` 行为一致 |
+| 时间与时钟 | 统一时钟源 · `use_sim_time` 行为一致（**已实现**，见 [设计](docs/time_and_clock.md)） |
 | 数学/几何/滤波 | EKF · PID · 坐标变换 |
 | 数据结构 | 无锁队列 · 线程池 |
-| 参数系统 | 类型化 schema + 校验 + **热加载** |
+| 参数系统 | 类型化 schema + 校验 + **热加载**（**已实现**，见 [设计](docs/parameter_system.md)） |
 | 错误码 | 结果类型 · 生命周期 |
 | 日志/录制/回放 | 基础设施（X4 的底座） |
 | 状态编码器 | **纯函数**，训练与部署共用 |
@@ -78,6 +98,11 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 |---|---|
 | **上游**（本仓依赖谁） | `foray_interfaces` |
 | **下游**（谁依赖本仓） | `foray_localization` · `foray_vision` · `foray_auto_aim` · `foray_navigation` · `foray_decision` · `foray_robots` · `foray_ws` |
+
+## 设计文档
+
+- [时间与时钟](docs/time_and_clock.md)——时钟域、`use_sim_time` 语义、急停时间源
+- [参数系统](docs/parameter_system.md)——schema、校验、YAML、热加载与线程模型
 
 ## 参考
 
