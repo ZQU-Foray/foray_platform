@@ -170,6 +170,25 @@ TEST_F(LidarTest, ReadTimeoutAndNoData) {
     EXPECT_EQ(imu_read.error().code, ErrorCode::kNoData);
 }
 
+TEST_F(LidarTest, HonorsImuDisabled) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    const std::string ip = "192.168.1.105";
+    hal::LidarConfig config = make_config(ip, "lidar");
+    config.imu_enabled = false;
+    auto lidar = make_device(config, api);
+    ASSERT_NE(lidar, nullptr);
+
+    ASSERT_TRUE(lidar->open().ok());
+    api->emit_info(ipv4_to_handle(ip), kMid360, "SN-IMU", ip);
+    ASSERT_TRUE(lidar->start().ok());
+
+    api->emit_imu_packet(ipv4_to_handle(ip), kMid360, imu_packet(1'000'000));
+    hal::ImuSample imu;
+    const Result<void> read = lidar->read_imu(imu, kShortTimeout);
+    EXPECT_FALSE(read.ok());
+    EXPECT_EQ(read.error().code, ErrorCode::kTimeout);
+}
+
 TEST_F(LidarTest, RejectsConfigWithoutSelector) {
     auto api = std::make_shared<test::MockLivoxApi>();
     hal::LidarConfig config;

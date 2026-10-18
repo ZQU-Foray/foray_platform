@@ -95,7 +95,7 @@
   - JSON 生成（0600）、本机 IP 校验、多雷达、退避恢复；
 - 文档：[docs/driver_livox.md](docs/driver_livox.md)、
   [docs/driver_deployment.md](docs/driver_deployment.md)；
-- 单测：27 个用例，mock 覆盖生命周期、路由、恢复、解析、组帧；
+- 单测：28 个用例，mock 覆盖生命周期、路由、恢复、解析、组帧；
   常规 / ASan+UBSan / TSan 全绿；安装后下游 `find_package` 通过；
 - **未完成**：真实 SDK2 构建与 HIL（本机尚未安装 SDK2）、双回波 `0x11`。
 
@@ -131,7 +131,7 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（平台 127 个 + Livox 驱动 27 个用例）
+- [x] 每个新增模块带独立可执行测试（平台 127 个 + Livox 驱动 28 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
 - [ ] Livox 真实 SDK2 构建与 HIL（需要安装 SDK2 并连接雷达）

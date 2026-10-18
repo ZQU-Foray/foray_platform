@@ -163,7 +163,7 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 
 ## 10. 测试
 
-`foray_platform_driver_livox_tests`（27 个用例，不需要 SDK/硬件）：
+`foray_platform_driver_livox_tests`（28 个用例，不需要 SDK/硬件）：
 
 - `packet_parser_test`：头字段、高/低/球坐标转换、逐点时间、line、IMU、
   time_type 映射、越界与双回波；
@@ -174,9 +174,9 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 
 验证记录：
 
-- 常规构建：27/27 通过；
-- ASan + UBSan：27/27 通过；
-- TSan：27/27 通过（mock 的 `uninit()` 模拟 SDK 等待回调归零）；
+- 常规构建：28/28 通过；
+- ASan + UBSan：28/28 通过；
+- TSan：28/28 通过（mock 的 `uninit()` 模拟 SDK 等待回调归零）；
 - 安装后下游 `find_package(foray_platform_driver_livox)` 可链接
   `foray_platform::driver_livox`。
 

@@ -17,7 +17,7 @@ void CallbackSink::push(const PacketView& packet) noexcept {
         return;
     }
     if (packet.data == nullptr || packet.size < kPacketHeaderBytes ||
-        packet.size > kMaxPacketBytes) {
+        packet.size > max_packet_bytes) {
         packets_dropped.fetch_add(1, std::memory_order_relaxed);
         return;
     }

@@ -249,6 +249,7 @@ Result<void> LidarImpl::open_locked() {
         sink->queue = queue_;
         sink->serial = config_.selector.serial;
         sink->ip_address = config_.selector.ip_address;
+        sink->max_packet_bytes = static_cast<std::uint16_t>(config_.max_packet_bytes);
         sink->handle.store(expected_handle, std::memory_order_release);
         std::atomic_store_explicit(&sink_, std::move(sink), std::memory_order_release);
     } catch (const std::bad_alloc&) {
@@ -491,6 +492,9 @@ void LidarImpl::handle_packet(const PacketSlot& slot, FrameAssembler& assembler)
     }
 
     if (header.value().data_type == kDataTypeImu) {
+        if (!config_.imu_enabled) {
+            return;
+        }
         hal::ImuSample sample;
         const Result<void> parsed =
             parse_imu(header.value(), slot.data.data(), slot.length, sample);

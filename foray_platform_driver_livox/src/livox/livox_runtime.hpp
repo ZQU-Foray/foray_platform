@@ -38,6 +38,9 @@ struct CallbackSink {
     std::string serial;
     std::string ip_address;
 
+    /// @brief 单个包最大字节数；由创建者在注册前写入。
+    std::uint16_t max_packet_bytes = static_cast<std::uint16_t>(kMaxPacketBytes);
+
     /// @brief SDK 回调入口：校验长度、打接收时间戳并拷贝到队列。
     void push(const PacketView& packet) noexcept;
 };
