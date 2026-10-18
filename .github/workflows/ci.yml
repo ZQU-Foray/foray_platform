@@ -128,6 +128,45 @@ jobs:
         if: steps.detect.outputs.found == 'true'
         run: pytest -v
 
+  # ---- 独立 CMake 包构建与测试（不依赖 ROS） ----
+  # L1 核心库必须能在没有 ROS 的环境中构建与测试，故单独设一个作业。
+  # 包不存在时跳过，保持空仓绿灯。
+  build-cmake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检测是否存在独立 CMake 包
+        id: detect
+        shell: bash
+        run: |
+          if [ -f foray_platform_core/CMakeLists.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "未发现独立 CMake 包，跳过。"
+          fi
+
+      - name: Install dependencies
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libyaml-cpp-dev libgtest-dev
+
+      - name: Configure
+        if: steps.detect.outputs.found == 'true'
+        run: >
+          cmake -S foray_platform_core -B build-core
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        if: steps.detect.outputs.found == 'true'
+        run: cmake --build build-core -j"$(nproc)"
+
+      - name: Test
+        if: steps.detect.outputs.found == 'true'
+        run: ctest --test-dir build-core --output-on-failure
+
   # ---- ROS 2 构建与测试 ----
   # 适用于 colcon 工作空间仓库（如 foray_navigation）。
   # 仓库内不存在 package.xml 时整个作业自动跳过，故可安全保留在通用模板里。
