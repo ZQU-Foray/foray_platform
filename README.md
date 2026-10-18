@@ -71,6 +71,7 @@ colcon test --event-handlers console_direct+
 | `foray/platform/result/result.hpp` | `foray::platform` | `ErrorCode` · `Error` · `Result<T>` · `Result<void>` | 公共 API 不抛异常；驱动原始错误码保存在 `Error::vendor_code` |
 | `foray/platform/container/spsc_queue.hpp` | `foray::platform::container` | `SpscQueue<T>` | 有界、无锁、单生产者/单消费者；满时 `try_push` 返回 false 并累计 `dropped()` |
 | `foray/platform/config/config.hpp` | `foray::platform::config` | `ConfigDocument` · `ConfigResolver` · `ConfigSnapshot` · `ConfigExporter` · `ConfigTool` · `MapEnvProvider` | 分层 YAML、include、`${ENV}`、`FORAY_<PARAM>` 覆盖、provenance；复用 `param` 做校验 |
+| `foray/platform/hal/hal.hpp` | `foray::platform::hal` | `Device` · `Camera` · `Lidar` · `ImageFrame` · `PointCloudFrame` · `ImuSample` · `FrameLease` · `FramePool` · `CameraConfig` / `LidarConfig` | 单写单读、最新帧邮箱；SDK 边界一次拷贝，租约之后零拷贝；时间戳带 `TimestampSync` |
 
 **时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 
@@ -91,14 +92,15 @@ colcon test --event-handlers console_direct+
 | 日志/录制/回放 | X4 底座：日志、录制、回放接口 | 未开始 |
 | 状态编码器 | 纯函数，训练与部署共用 | 未开始 |
 
-### 规划中：L2 下行 HAL
+### L2 下行 HAL
 
 > 依赖倒置：抽象在本仓，具体驱动放本仓之下的插件目录；抽象层不得出现 ROS 类型。
+> 设计说明：[docs/hal_architecture.md](docs/hal_architecture.md)。
 
 | 抽象接口 | 职责 | 契约要点 | 状态 |
 |---|---|---|---|
-| 设备生命周期 | `open` / `close` / `recover` | `ERROR` 态尽量自修复；状态可查询 | 未开始 |
-| 传感器 | 激光 · IMU · 相机 | 只暴露类型化数据读取接口，不暴露厂商 SDK 类型 | 未开始 |
+| 设备生命周期 | `open` / `close` / `recover` | `ERROR` 态尽量自修复；状态可查询 | **接口已实现** |
+| 传感器 | 激光 · IMU · 相机 | 只暴露类型化数据读取接口，不暴露厂商 SDK 类型 | **接口与帧池已实现**；驱动进行中 |
 | 执行器 | 底盘 · 云台 · 发射机构 | 指令 + 安全状态；内置超时归零 | 未开始 |
 | 总线 | 串口 · CAN · USB | 字节流/帧读写，设备无关 | 未开始 |
 
@@ -130,6 +132,7 @@ colcon test --event-handlers console_direct+
 - [时间与时钟](docs/time_and_clock.md)——时钟域、`use_sim_time` 语义、急停时间源
 - [参数系统](docs/parameter_system.md)——schema、校验、YAML、热加载与线程模型
 - [统一配置解析栈](docs/config_stack.md)——分层、include、环境变量、来源追踪与导出
+- [L2 HAL 架构](docs/hal_architecture.md)——生命周期、线程模型、帧池与零拷贝边界
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 
 ## 参考

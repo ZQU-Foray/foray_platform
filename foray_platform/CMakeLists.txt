@@ -35,6 +35,17 @@ add_library(foray_platform::core ALIAS foray_platform_core)
 # 安装后的导入名保持 foray_platform::core。
 set_target_properties(foray_platform_core PROPERTIES EXPORT_NAME core)
 
+# L2 HAL 目前是 header-only 接口；后续加入 ConfigBinder 时再转为普通库。
+add_library(foray_platform_hal INTERFACE)
+add_library(foray_platform::hal ALIAS foray_platform_hal)
+set_target_properties(foray_platform_hal PROPERTIES EXPORT_NAME hal)
+target_include_directories(foray_platform_hal
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_link_libraries(foray_platform_hal INTERFACE foray_platform_core)
+
 target_include_directories(foray_platform_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -69,9 +80,11 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/param/manager_test.cpp
         test/config/resolver_test.cpp
         test/config/exporter_test.cpp
+        test/hal/types_test.cpp
+        test/hal/frame_pool_test.cpp
     )
     target_link_libraries(foray_platform_tests
-        PRIVATE foray_platform_core GTest::gtest_main
+        PRIVATE foray_platform_hal foray_platform_core GTest::gtest_main
     )
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -83,7 +96,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
 endif()
 
 install(FILES package.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME})
-install(TARGETS foray_platform_core
+install(TARGETS foray_platform_core foray_platform_hal
     EXPORT foray_platformTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

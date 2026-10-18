@@ -60,13 +60,25 @@
 - 设计说明：[docs/config_stack.md](docs/config_stack.md)；
 - 单测：`foray_platform/test/config/`；ASan/UBSan 通过。
 
+### M4/M5 交付物
+
+- `foray_platform/include/foray/platform/hal/`
+  - `Device` / `Camera` / `Lidar` 生命周期与读取接口；
+  - `ImageFrame` / `PointCloudFrame` / `ImuSample` / `TimestampSync`；
+  - `CameraConfig` / `LidarConfig` / `DeviceSelector` / `TriggerConfig`；
+  - `FrameLease`（move-only）+ `FramePool`（最新帧邮箱、固定槽位、无锁读写）；
+- 同包新增 `foray_platform_hal` interface target，导出 `foray_platform::hal`；
+- 单测：类型/默认值、发布/获取、替换丢帧、槽位耗尽、租约晚于池销毁、
+  单写单读并发；ASan/UBSan/TSan 通过；
+- 设计说明：[docs/hal_architecture.md](docs/hal_architecture.md)。
+
 ## 当前 Agent State
 
-M3_DONE
+M5_DONE
 
 ## Before Snapshot
 
-commit hash:   92a53ec
+commit hash:   52619e5
 branch:        feat/l1-foundation
 modified files: 包合并（foray_platform_core → foray_platform）；新增 result/；更新 README/tree/decision/ci/plan
 risk level:    L1
@@ -92,7 +104,7 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（98 个用例）
+- [x] 每个新增模块带独立可执行测试（112 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯

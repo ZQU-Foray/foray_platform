@@ -17,6 +17,7 @@
 │   ├── time_and_clock.md        时钟域与 use_sim_time 语义
 │   ├── parameter_system.md      参数 schema / 校验 / 热加载设计
 │   ├── config_stack.md          分层配置、include、env 与导出
+│   ├── hal_architecture.md      HAL 生命周期、帧池与零拷贝
 │   └── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
 ├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
 │   ├── CMakeLists.txt
@@ -28,7 +29,8 @@
 │   │   ├── param/               schema · snapshot · store · source · manager
 │   │   ├── result/              ErrorCode · Error · Result<T>
 │   │   ├── container/           有界 SPSC 队列（header-only）
-│   │   └── config/              document · resolver · snapshot · exporter · tool
+│   │   ├── config/              document · resolver · snapshot · exporter · tool
+│   │   └── hal/                 Device · Camera · Lidar · 帧 · FrameLease/FramePool
 │   ├── src/
 │   │   ├── time/clock.cpp
 │   │   ├── param/               实现、内部校验与 YAML 工具
@@ -39,7 +41,8 @@
 │       ├── param/               参数系统单测
 │       ├── result/              错误码 / Result 单测
 │       ├── container/           SPSC 队列单测
-│       └── config/              分层 / include / env / 导出单测
+│       ├── config/              分层 / include / env / 导出单测
+│       └── hal/                 类型 / 配置默认值 / 帧池与租约单测
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板
