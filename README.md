@@ -51,34 +51,58 @@ colcon test --event-handlers console_direct+
 
 | 类型 | 依赖 |
 |---|---|
-| **自研仓** | X2 |
+| **自研仓** | `foray_interfaces`（X2 接口契约层） |
 | **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · 各传感器官方 SDK（Livox / Hikvision 等） |
 
 ## 接口
 
-**L1 基础设施**
+> 本仓是 **C++ 库**，不是 ROS 节点。这里的「接口」指**公共 C++ API**；
+> `foray_platform_core` 不直接定义 ROS 话题/服务。需要跨进程的契约由
+> `foray_interfaces`（X2）定义；后续 ROS 适配层落地后再在本节补充话题/参数清单。
+>
+> 未冻结的接口只描述**契约方向**，不承诺具体签名。
 
-| 模块 | 内容 |
-|---|---|
-| 时间与时钟 | 统一时钟源 · `use_sim_time` 行为一致（**已实现**，见 [设计](docs/time_and_clock.md)） |
-| 数学/几何/滤波 | EKF · PID · 坐标变换 |
-| 数据结构 | 无锁队列 · 线程池 |
-| 参数系统 | 类型化 schema + 校验 + **热加载**（**已实现**，见 [设计](docs/parameter_system.md)） |
-| 错误码 | 结果类型 · 生命周期 |
-| 日志/录制/回放 | 基础设施（X4 的底座） |
-| 状态编码器 | **纯函数**，训练与部署共用 |
+### 已实现：L1 公共 API
 
-**L2 下行 HAL**（依赖倒置：抽象在本仓，具体驱动放本仓之下的插件目录）
+| 头文件 | 命名空间 | 公共类型 / 函数 | 契约 |
+|---|---|---|---|
+| `foray/platform/time/time.hpp` | `foray::platform::time` | `Duration` · `Timestamp` · `Clock` · `ClockDomain` · `SystemClock` · `SteadyClock` · `ManualClock` | 纳秒精度；时间点只在同一时钟域内比较；仿真时钟未就绪时 `now()` 为零且 `is_ready() == false` |
+| `foray/platform/param/param.hpp` | `foray::platform::param` | `ParamType` · `ParamValue` · `ParamSpec` · `ParamSchema` · `ParamSnapshot` · `ParamStore` · `ParamSource` · `MapParamSource` · `YamlFileParamSource` · `ParamManager` · `ParamResult` / `ParamError` | 类型化 schema + 校验 + 热加载；读路径为不可变快照，写路径在非实时线程整批原子生效 |
 
-| 模块 | 内容 |
-|---|---|
-| 传感器 | 激光 · IMU · 相机 |
-| 执行器 | 底盘 · 云台 · 发射机构 |
-| 总线 | 串口 · CAN · USB |
-| 设备生命周期 | `open` / `close` / `recover`，`ERROR` 态尽量自修复 |
+**时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 
-**急停硬路径放本仓**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
-位于最靠近执行器的执行器抽象内部，独立实时线程 + 超时定时器。
+| 域 | 实现 | 用途 |
+|---|---|---|
+| `kSystemWall` | `SystemClock` | 消息时间戳、与外部系统对时 |
+| `kSteady` | `SteadyClock` | 间隔测量、实时循环、**急停/看门狗** |
+| `kSimulated` | `ManualClock` | `use_sim_time=true`、回放、单测 |
+
+### 规划中：L1 模块
+
+> 以下为方向性接口，落地时在本节替换为具体头文件与类型。
+
+| 模块 | 预期接口形态 | 状态 |
+|---|---|---|
+| 数学/几何/滤波 | 无 ROS 的纯函数与类：EKF、PID、坐标变换 | 未开始 |
+| 数据结构 | `LockFreeQueue<T>`、`ThreadPool` | 未开始 |
+| 错误码 | `Result<T>` / `ErrorCode`，生命周期与错误上下文 | 未开始 |
+| 日志/录制/回放 | X4 底座：日志、录制、回放接口 | 未开始 |
+| 状态编码器 | 纯函数，训练与部署共用 | 未开始 |
+
+### 规划中：L2 下行 HAL
+
+> 依赖倒置：抽象在本仓，具体驱动放本仓之下的插件目录；抽象层不得出现 ROS 类型。
+
+| 抽象接口 | 职责 | 契约要点 | 状态 |
+|---|---|---|---|
+| 设备生命周期 | `open` / `close` / `recover` | `ERROR` 态尽量自修复；状态可查询 | 未开始 |
+| 传感器 | 激光 · IMU · 相机 | 只暴露类型化数据读取接口，不暴露厂商 SDK 类型 | 未开始 |
+| 执行器 | 底盘 · 云台 · 发射机构 | 指令 + 安全状态；内置超时归零 | 未开始 |
+| 总线 | 串口 · CAN · USB | 字节流/帧读写，设备无关 | 未开始 |
+
+**急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
+位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，
+时间源固定为 `SteadyClock`（见 [时间与时钟](docs/time_and_clock.md)）。
 
 ## 纪律
 
