@@ -70,7 +70,9 @@ ctest --test-dir ~/.cache/foray-platform-build/livox-on --output-on-failure
 - 只接受 `liblivox_lidar_sdk_shared.so`；找到静态库直接失败；
 - OFF 时仍构建库与工厂，`open()` 返回 `kSdkUnavailable`；
 - 安装后的 target 导出 `FORAY_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
-  `#if FORAY_DRIVER_LIVOX_HAS_SDK`（不能 `#ifdef`）。
+  `#if FORAY_DRIVER_LIVOX_HAS_SDK`（不能 `#ifdef`）；
+- 静态驱动库的下游链接时需在自身构建中设置 `LIVOX_SDK2_ROOT`，或把 SDK
+  前缀加入 `CMAKE_PREFIX_PATH`；包 Config 会用 `find_dependency(LivoxSDK2)` 重新定位。
 
 ### 1.4 实机部署
 
