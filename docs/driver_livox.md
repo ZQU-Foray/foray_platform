@@ -7,10 +7,14 @@
 
 ```text
 foray_platform_driver_livox/
+├── cmake/
+│   ├── FindLivoxSDK2.cmake     暴露 LivoxSDK2::shared
+│   └── foray_platform_driver_livoxConfig.cmake.in
 ├── include/foray/platform/driver/livox/lidar.hpp   公共工厂（无 SDK 类型）
 ├── src/livox/
-│   ├── lidar.cpp               生命周期、配置、取流线程
+│   ├── lidar.cpp               生命周期、配置、取流线程（核心对象）
 │   ├── lidar_impl.hpp
+│   ├── lidar_public_factory.cpp 公共 make_lidar（后端对象）
 │   ├── livox_runtime.cpp/.hpp  进程级 SDK 单例、handle 路由、回调接收器
 │   ├── livox_api.hpp           SDK 函数表抽象
 │   ├── livox_api_real.cpp      真实 SDK（仅 FORAY_BUILD_DRIVER_LIVOX=ON）
@@ -18,10 +22,19 @@ foray_platform_driver_livox/
 │   ├── packet_parser.cpp/.hpp  36 字节头 + 点/IMU 解析
 │   ├── frame_assembler.cpp/.hpp frame_cnt 组帧、逐点时间、帧池写入
 │   └── config_json.cpp/.hpp    生成 Livox 网络配置 JSON
-└── test/livox/                 mock 函数表与单元测试
+└── test/livox/
+    ├── ..._test.cpp            协议 / 组帧 / mock 生命周期（core，不含 SDK）
+    └── backend_test.cpp        后端能力（OFF 断言 kSdkUnavailable）
 ```
 
 公共头只暴露 `make_lidar(const hal::LidarConfig&)`，不出现任何 SDK 类型。
+
+构建目标：
+
+- `foray_livox_core_objects`：协议、运行时、组帧、JSON，**不链接 SDK**；
+- `foray_livox_backend_objects`：`livox_api_real.cpp` 或 `livox_api_stub.cpp`；
+- 最终库 = core + backend；mock 测试只链 core，因此任何开关下都不需要 SDK；
+- `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT` 决定 `FindLivoxSDK2.cmake` 的搜索范围。
 
 ## 2. 线程模型
 
@@ -163,27 +176,31 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 
 ## 10. 测试
 
-`foray_platform_driver_livox_tests`（28 个用例，不需要 SDK/硬件）：
+两个测试可执行文件，合计 28 个用例：
 
-- `packet_parser_test`：头字段、高/低/球坐标转换、逐点时间、line、IMU、
-  time_type 映射、越界与双回波；
-- `config_json_test`：端口、host_ip、文件权限、默认路径；
-- `frame_assembler_test`：变帧发布、空闲超时、NoSync 时间置零、溢出、槽位耗尽；
-- `lidar_test`：完整生命周期、点云/IMU、统计、超时、多 handle 路由、恢复、
-  默认工厂在 stub 下返回 `kSdkUnavailable`。
+- `foray_platform_driver_livox_tests`（27 个，只链 core + mock，不需要 SDK/硬件）：
+  - `packet_parser_test`：头字段、高/低/球坐标转换、逐点时间、line、IMU、
+    time_type 映射、越界与双回波；
+  - `config_json_test`：端口、host_ip、文件权限、默认路径；
+  - `frame_assembler_test`：变帧发布、空闲超时、NoSync 时间置零、溢出、槽位耗尽；
+  - `lidar_test`：完整生命周期、点云/IMU、统计、超时、多 handle 路由、恢复。
+- `foray_platform_driver_livox_backend_tests`（1 个）：
+  - OFF 断言公共工厂 `open()` 返回 `kSdkUnavailable`；
+  - ON 只验证真实后端能构造，不打开设备。
 
 验证记录：
 
-- 常规构建：28/28 通过；
+- 常规构建：28/28 通过（OFF 与 ON）；
 - ASan + UBSan：28/28 通过；
 - TSan：28/28 通过（mock 的 `uninit()` 模拟 SDK 等待回调归零）；
+- `ldd`：core 测试不出现 Livox SDK；backend 测试在 ON 下链接 SDK；
 - 安装后下游 `find_package(foray_platform_driver_livox)` 可链接
-  `foray_platform::driver_livox`。
+  `foray_platform::driver_livox`；ON 静态库经 `find_dependency(LivoxSDK2)` 重新定位。
 
 ## 11. 已知限制
 
-- 真实 SDK2 构建与 HIL 尚未在本机执行（SDK 需另行安装，见
-  [驱动部署](driver_deployment.md)）；
+- 真实 SDK 构建/链接已在开发机验证；实机读取未完成（验证时雷达链路断开，
+  HIL 不在本次范围，见 [驱动部署](driver_deployment.md)）；
 - 双回波 `0x11` 未实现，需要确认固件/SDK 版本与结构；
 - `host_ip` 变化需要重新创建运行时（进程内只初始化一次）；
 - 未做数据包 CRC 校验（SDK 已校验）；

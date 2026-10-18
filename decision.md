@@ -324,3 +324,43 @@ Reason:
 Rejected:
 - 把 SDK 二进制提交到仓库；
 - OFF 时仍假装初始化成功。
+
+---
+
+## Decision
+
+Date: 2026-10-19
+
+Context: 需要明确 Livox SDK2 的组织内依赖方式，并解决两个构建问题：
+ON 时 mock 测试被迫链接真实 SDK；静态驱动库把构建机 SDK 绝对路径导出给下游。
+
+Decision:
+- **不 fork、不使用 submodule、不使用 FetchContent**；Livox-SDK2 v1.3.1
+  以 commit `f5d9375f84efe2b15bc0a052d3e18482ed13adf4` 在
+  `foray_ws/.repos` 中 pin 到 `third_party/livox_sdk2`；
+- 开发机默认安装到 `~/.cache/foray-platform-prefix/livox-sdk2`；
+  实机镜像固定 `/opt/foray/livox-sdk2`；
+- CMake 新增 `FindLivoxSDK2.cmake`，只暴露 `LivoxSDK2::shared`；
+  `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`，PREBUILT 要求 SDK 位于
+  `LIVOX_SDK2_ROOT` 之下；
+- 驱动拆成 `foray_livox_core_objects`（无 SDK）与
+  `foray_livox_backend_objects`（real/stub）；mock 测试只链 core；
+- `FORAY_DRIVER_LIVOX_HAS_SDK` 作为最终 target 的 PUBLIC 定义（0/1），
+  描述已安装产物能力；下游用 `#if` 判断；
+- 静态库的 SDK 依赖以 `$<LINK_ONLY:LivoxSDK2::shared>` 导出，
+  下游由包 Config 的 `find_dependency(LivoxSDK2)` 重新定位。
+
+Reason:
+- 符合组织规范：不提交厂商 SDK、不使用 submodule、不做无必要的 fork；
+- 开发/CI 默认零 SDK 依赖，真实构建又能在任意部署前缀复现；
+- imported target 消除绝对路径泄漏，`HAS_SDK` 让下游在编译期识别能力。
+
+Alternatives:
+- fork `Livox-SDK2-foray-fork`：仅在未来必须打 patch 时启用；
+- 单一目标 + 源码宏切换：仍会让 mock 测试链接 SDK；
+- 共享库驱动：可避免 LINK_ONLY，但会改变现有静态库部署形态。
+
+Rejected:
+- 在 `src/` 下放第三方 SDK 源码；
+- 让 ON 构建的 mock 测试依赖 SDK 运行库；
+- 在安装导出中写死构建机 SDK 路径。

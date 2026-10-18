@@ -5,67 +5,115 @@
 
 ## 1. Livox SDK2
 
-### 1.1 版本与获取
+### 1.1 依赖来源
 
-- 版本：**v1.3.1**（与调研一致）；
-- 许可：MIT；
-- 不提交 SDK 源码/二进制到本仓；由部署环境或 `foray_ws/.repos` pin 版本。
+- **不 fork、不 submodule、不 FetchContent**；
+- 版本 **v1.3.1**，commit `f5d9375f84efe2b15bc0a052d3e18482ed13adf4`；
+- 在 `foray_ws/.repos` 中 pin 到 `third_party/livox_sdk2`（`src/` 之外）；
+- 源码由 vcstool 拉取，不进仓库；构建安装由 `foray_ws/scripts` 完成；
+- 只有必须修改上游时才 fork `Livox-SDK2-foray-fork` 并记录 patch。
+
+### 1.2 开发机：拉取与构建
 
 ```bash
-git clone --depth 1 --branch v1.3.1 \
-    https://github.com/Livox-SDK/Livox-SDK2.git
+cd foray_ws
+source scripts/env.sh
+scripts/import_repos.sh          # 拉取 third_party/livox_sdk2
+scripts/build_livox_sdk2.sh      # 构建并安装到本地前缀
 ```
 
-### 1.2 构建（Arch / 新 CMake 注意事项）
+默认前缀：`~/.cache/foray-platform-prefix/livox-sdk2`。
 
-Livox-SDK2 v1.3.1 的 CMake 最低版本声明较旧，新 CMake 需要放宽策略；
-新 GCC 下 `file_manager.h` 缺少 `<cstdint>`，通过编译参数注入：
+脚本等价的 CMake 参数（v1.3.1 的兼容处理）：
 
 ```bash
-cmake -S Livox-SDK2 -B Livox-SDK2/build \
+cmake -S third_party/livox_sdk2 -B ~/.cache/foray-build/livox-sdk2 \
       -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$HOME/.cache/foray-platform-prefix/livox-sdk2" \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-      -DCMAKE_CXX_FLAGS="-include cstdint" \
-      -DCMAKE_INSTALL_PREFIX=/usr/local
-cmake --build Livox-SDK2/build -j"$(nproc)"
-cmake --install Livox-SDK2/build
+      -DCMAKE_CXX_FLAGS="-include cstdint"
+cmake --build ~/.cache/foray-build/livox-sdk2 -j"$(nproc)"
+cmake --install ~/.cache/foray-build/livox-sdk2
 ```
 
-安装后应存在：
+安装后：
 
 ```text
-/usr/local/include/livox_lidar_api.h
-/usr/local/include/livox_lidar_def.h
-/usr/local/lib/liblivox_lidar_sdk_shared.so
+<prefix>/include/livox_lidar_api.h
+<prefix>/include/livox_lidar_def.h
+<prefix>/lib/liblivox_lidar_sdk_shared.so
 ```
 
-> SDK2 没有 CMake package config，驱动用 `find_path` + `find_library` 定位。
+> SDK2 没有 CMake package config；驱动用随包安装的
+> `FindLivoxSDK2.cmake` 暴露 `LivoxSDK2::shared`。
 
-### 1.3 构建驱动
+### 1.3 驱动 provider
+
+| provider | 用途 | 搜索方式 |
+|---|---|---|
+| `SYSTEM`（默认） | 系统安装或 `CMAKE_PREFIX_PATH` | 默认路径 + 前缀，支持 `lib`/`lib64`/multiarch |
+| `PREBUILT` | 开发机/实机私有前缀 | 必须有 `LIVOX_SDK2_ROOT`，且头/库必须位于该前缀下 |
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+# 开发机真实后端
+cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \
-      -DLIVOX_SDK2_ROOT=/usr/local
-cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
-ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
+      -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
+      -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2"
+cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
+ctest --test-dir ~/.cache/foray-platform-build/livox-on --output-on-failure
 ```
 
-- `LIVOX_SDK2_ROOT` 可省略，默认搜索 `/usr/local` 与 `/usr`；
-- ON 时找不到头/库会 `FATAL_ERROR`，不会静默退回 stub；
-- OFF 时仍构建库与工厂，`open()` 返回 `kSdkUnavailable`。
+- ON 时找不到 SDK：`FATAL_ERROR`，不静默退回 stub；
+- 只接受 `liblivox_lidar_sdk_shared.so`；找到静态库直接失败；
+- OFF 时仍构建库与工厂，`open()` 返回 `kSdkUnavailable`；
+- 安装后的 target 导出 `FORAY_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
+  `#if FORAY_DRIVER_LIVOX_HAS_SDK`（不能 `#ifdef`）。
 
-### 1.4 运行时库路径
+### 1.4 实机部署
 
-SDK 不在系统库路径时：
+- 镜像构建时从 `.repos` pin 的 commit 构建 SDK，安装到
+  **`/opt/foray/livox-sdk2`**；
+- 镜像只保留安装产物，不保留 SDK 源码/构建目录；
+- 运行时库路径二选一：
 
 ```bash
-export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+# 系统级
+echo "/opt/foray/livox-sdk2/lib" | sudo tee /etc/ld.so.conf.d/foray-livox-sdk2.conf
+sudo ldconfig
+
+# 会话级
+export LD_LIBRARY_PATH=/opt/foray/livox-sdk2/lib:$LD_LIBRARY_PATH
 ```
 
-长期部署建议用 rpath 或 `ldconfig` 配置。
+构建：
+
+```bash
+FORAY_LIVOX_SDK2_PREFIX=/opt/foray/livox-sdk2 source foray_ws/scripts/env.sh
+FORAY_LIVOX_SDK=ON foray_ws/scripts/colcon_build.sh
+```
+
+或直接传 colcon 参数：
+
+```bash
+colcon build --base-paths src --symlink-install \
+  --cmake-args \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DFORAY_BUILD_DRIVER_LIVOX=ON \
+    -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
+    -DLIVOX_SDK2_ROOT=/opt/foray/livox-sdk2
+```
+
+验证：
+
+```bash
+ldconfig -p | grep livox_lidar_sdk_shared
+# 最终库为共享库时：
+ldd install/foray_platform_driver_livox/lib/libforay_platform_driver_livox.so | grep livox
+# 最终库为静态库时，对实际可执行文件执行 ldd
+```
 
 ## 2. 网络
 

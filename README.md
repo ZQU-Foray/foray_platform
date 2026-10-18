@@ -39,14 +39,21 @@ cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
 ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
 ```
 
-真实硬件构建需先安装 Livox SDK2，再打开开关：
+真实硬件构建需先把 Livox SDK2 安装到私有前缀（推荐由
+`foray_ws/scripts/build_livox_sdk2.sh` 完成），再打开开关：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \
-      -DLIVOX_SDK2_ROOT=/usr/local
+      -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
+      -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2"
 ```
+
+- `FORAY_LIVOX_SDK_PROVIDER=SYSTEM`：从系统路径 / `CMAKE_PREFIX_PATH` 查找；
+- `PREBUILT`：只接受 `LIVOX_SDK2_ROOT` 前缀下的 SDK；
+- 安装后的 target 导出 `FORAY_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
+  `#if FORAY_DRIVER_LIVOX_HAS_SDK` 判断能力。
 
 详见 [驱动部署](docs/driver_deployment.md)。
 

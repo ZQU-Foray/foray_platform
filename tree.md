@@ -50,11 +50,13 @@
 │   ├── CMakeLists.txt
 │   ├── package.xml
 │   ├── cmake/
+│   │   ├── FindLivoxSDK2.cmake  暴露 LivoxSDK2::shared
 │   │   └── foray_platform_driver_livoxConfig.cmake.in
 │   ├── include/foray/platform/driver/livox/
 │   │   └── lidar.hpp            公共工厂（无 SDK 类型）
 │   ├── src/livox/
 │   │   ├── lidar.cpp/.hpp       生命周期、配置、解析线程
+│   │   ├── lidar_public_factory.cpp  公共 make_lidar（后端对象）
 │   │   ├── livox_runtime.cpp/.hpp  进程级 SDK 单例与 handle 路由
 │   │   ├── livox_api.hpp        SDK 函数表抽象
 │   │   ├── livox_api_real.cpp   SDK ON 时的真实实现
@@ -62,7 +64,7 @@
 │   │   ├── packet_parser.cpp/.hpp  36 字节头与点/IMU 解析
 │   │   ├── frame_assembler.cpp/.hpp  组帧与逐点时间
 │   │   └── config_json.cpp/.hpp  Livox 网络 JSON
-│   └── test/livox/              mock 函数表与单测
+│   └── test/livox/              mock 单测 + backend 能力测试
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板

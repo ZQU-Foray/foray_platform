@@ -93,21 +93,28 @@
   - 包解析：0x01 高精度 / 0x02 低精度 / 0x03 球坐标 / 0x00 IMU；
   - 时间映射：`time_type` 0/1/2/3/4/未知 → `TimestampSync`；
   - JSON 生成（0600）、本机 IP 校验、多雷达、退避恢复；
+  - SDK 依赖：`FindLivoxSDK2.cmake` + `LivoxSDK2::shared`；
+    `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`；
+  - core/backend 目标拆分：mock 测试只链 core，任何开关下不依赖 SDK；
+  - `FORAY_DRIVER_LIVOX_HAS_SDK=0/1` 作为已安装产物能力导出；
 - 文档：[docs/driver_livox.md](docs/driver_livox.md)、
   [docs/driver_deployment.md](docs/driver_deployment.md)；
-- 单测：28 个用例，mock 覆盖生命周期、路由、恢复、解析、组帧；
+- 单测：28 个用例（27 core + 1 backend），mock 覆盖生命周期、路由、恢复、解析、组帧；
   常规 / ASan+UBSan / TSan 全绿；安装后下游 `find_package` 通过；
-- **未完成**：真实 SDK2 构建与 HIL（本机尚未安装 SDK2）、双回波 `0x11`。
+- 跨仓：`foray_ws/.repos` pin Livox-SDK2 v1.3.1，新增依赖/构建/环境脚本；
+- **已完成**：真实 SDK2 构建、ON 编译/链接、下游消费；
+- **未完成**：实机读取（验证时雷达链路断开）、双回波 `0x11`。
 
 ## 当前 Agent State
 
-M10_CODE_DONE_SDK_PENDING
+M10_SDK_BUILD_VERIFIED_HIL_PENDING
 
 ## Before Snapshot
 
-commit hash:   d40e647
+commit hash:   51d451b
 branch:        feat/l1-foundation
-modified files: 新增 foray_platform_driver_livox；更新 README/tree/decision/plan/ci/docs
+modified files: 新增 FindLivoxSDK2、core/backend 拆分、HAS_SDK、SDK ON CI；
+  跨仓 foray_ws：`.repos` pin、scripts、文档
 risk level:    L1
 
 ## 模糊点与待确认项
@@ -119,6 +126,10 @@ risk level:    L1
 - 参数系统暂不支持序列参数与变更回调；配置栈的数组/动态列表支持按需扩展
 - 配置解析栈按计划在 core 内扩展（`config/`）；机器人 YAML 归 `foray_robots`
 - HAL 目标的驱动与 ROS 适配尚未开始，按 M2–M12 里程碑推进
+- Livox SDK2 开发机默认装到 `~/.cache/foray-platform-prefix/livox-sdk2`；
+  实机镜像固定 `/opt/foray/livox-sdk2`；版本由 `foray_ws/.repos` pin
+- 实机雷达曾发现为 `192.168.1.195`（主机 `br-lidar` 192.168.1.51），
+  但验证时链路断开；HIL 留待硬件恢复
 
 ## Vector Backend Status
 
@@ -134,6 +145,7 @@ Commit: （首次提交）
 - [x] 每个新增模块带独立可执行测试（平台 127 个 + Livox 驱动 28 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
-- [ ] Livox 真实 SDK2 构建与 HIL（需要安装 SDK2 并连接雷达）
+- [x] Livox 真实 SDK2 构建、ON 编译/链接与下游消费
+- [ ] Livox 实机读取（雷达链路恢复后）
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯
