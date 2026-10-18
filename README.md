@@ -127,6 +127,7 @@ colcon test --event-handlers console_direct+
 
 - [时间与时钟](docs/time_and_clock.md)——时钟域、`use_sim_time` 语义、急停时间源
 - [参数系统](docs/parameter_system.md)——schema、校验、YAML、热加载与线程模型
+- [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 
 ## 参考
 

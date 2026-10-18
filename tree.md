@@ -15,7 +15,8 @@
 ├── .gitignore
 ├── docs/
 │   ├── time_and_clock.md        时钟域与 use_sim_time 语义
-│   └── parameter_system.md      参数 schema / 校验 / 热加载设计
+│   ├── parameter_system.md      参数 schema / 校验 / 热加载设计
+│   └── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
 ├── foray_platform_core/         L1 纯 C++ 核心库（不依赖 ROS）
 │   ├── CMakeLists.txt
 │   ├── package.xml              build_type=cmake，供 colcon 识别
