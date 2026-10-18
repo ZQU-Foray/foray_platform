@@ -15,6 +15,15 @@ find_package(yaml-cpp REQUIRED)
 
 add_library(foray_platform_core
     src/time/clock.cpp
+    src/param/value.cpp
+    src/param/result.cpp
+    src/param/validation.cpp
+    src/param/schema.cpp
+    src/param/snapshot.cpp
+    src/param/store.cpp
+    src/param/source.cpp
+    src/param/yaml_source.cpp
+    src/param/manager.cpp
 )
 add_library(foray_platform::core ALIAS foray_platform_core)
 
@@ -46,6 +55,11 @@ if(FORAY_PLATFORM_BUILD_TESTS)
 
     add_executable(foray_platform_core_tests
         test/time/clock_test.cpp
+        test/param/value_test.cpp
+        test/param/schema_test.cpp
+        test/param/store_test.cpp
+        test/param/yaml_source_test.cpp
+        test/param/manager_test.cpp
     )
     target_link_libraries(foray_platform_core_tests
         PRIVATE foray_platform_core GTest::gtest_main
