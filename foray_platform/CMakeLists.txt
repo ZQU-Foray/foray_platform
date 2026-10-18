@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(foray_platform_core VERSION 0.1.0 LANGUAGES CXX)
+project(foray_platform VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,12 +9,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(FORAY_PLATFORM_BUILD_TESTS "Build foray_platform_core unit tests" ON)
+option(FORAY_PLATFORM_BUILD_TESTS "Build foray_platform unit tests" ON)
 
 find_package(yaml-cpp REQUIRED)
 
 add_library(foray_platform_core
     src/time/clock.cpp
+    src/result/error.cpp
     src/param/value.cpp
     src/param/result.cpp
     src/param/validation.cpp
@@ -53,29 +54,30 @@ if(FORAY_PLATFORM_BUILD_TESTS)
     enable_testing()
     find_package(GTest REQUIRED)
 
-    add_executable(foray_platform_core_tests
+    add_executable(foray_platform_tests
         test/time/clock_test.cpp
+        test/result/result_test.cpp
         test/param/value_test.cpp
         test/param/schema_test.cpp
         test/param/store_test.cpp
         test/param/yaml_source_test.cpp
         test/param/manager_test.cpp
     )
-    target_link_libraries(foray_platform_core_tests
+    target_link_libraries(foray_platform_tests
         PRIVATE foray_platform_core GTest::gtest_main
     )
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(foray_platform_core_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(foray_platform_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
     include(GoogleTest)
-    gtest_discover_tests(foray_platform_core_tests)
+    gtest_discover_tests(foray_platform_tests)
 endif()
 
 install(FILES package.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME})
 install(TARGETS foray_platform_core
-    EXPORT foray_platform_coreTargets
+    EXPORT foray_platformTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -83,24 +85,24 @@ install(TARGETS foray_platform_core
 )
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(EXPORT foray_platform_coreTargets
-    FILE foray_platform_coreTargets.cmake
+install(EXPORT foray_platformTargets
+    FILE foray_platformTargets.cmake
     NAMESPACE foray_platform::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/foray_platform_core
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/foray_platform
 )
 
 configure_package_config_file(
-    cmake/foray_platform_coreConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/foray_platform_coreConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/foray_platform_core
+    cmake/foray_platformConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/foray_platformConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/foray_platform
 )
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/foray_platform_coreConfigVersion.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/foray_platformConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion
 )
 install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/foray_platform_coreConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/foray_platform_coreConfigVersion.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/foray_platform_core
+    ${CMAKE_CURRENT_BINARY_DIR}/foray_platformConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/foray_platformConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/foray_platform
 )

@@ -1,7 +1,7 @@
 # 参数系统
 
 > 所属层：L1 平台基础 · 对应横切面：X4 可观测与调参
-> 代码：`foray_platform_core/include/foray/platform/param/`
+> 代码：`foray_platform/include/foray/platform/param/`
 
 ## 1. 目标
 

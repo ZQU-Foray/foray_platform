@@ -138,3 +138,75 @@ Alternatives:
 
 Rejected:
 - 在核心库中包含 ROS 头文件。
+
+---
+
+## Decision
+
+Date: 2026-10-18
+
+Context: 原计划把 L1 core 与 L2 HAL 拆成两个包（`foray_platform_core`
+与 `foray_platform_hal`）。两者同仓、同 owner、同变更率，额外包会带来
+重复的 package.xml、CMake 导出与 CI 条目。
+
+Decision: 合并为一个包 **`foray_platform`**，包内保留两个 CMake target：
+`foray_platform_core`（L1）与 `foray_platform_hal`（L2）；
+别名仍为 `foray_platform::core` / `foray_platform::hal`。
+
+Reason:
+- 符合「一个仓 = 一个团队角色 + 一个变更率档位」；
+- 减少重复的构建/导出/CI 配置；
+- L1/L2 边界由 target 与 `include/foray/platform/{core 模块,hal}` 路径保留。
+
+Alternatives:
+- 保持两个独立包：边界更硬，但当前收益不足以抵消重复配置；
+- 合并为单库：更简单，但会让只依赖 L1 的下游被迫链接 HAL。
+
+Rejected:
+- 继续按 ROS package 粒度细分。
+
+---
+
+## Decision
+
+Date: 2026-10-18
+
+Context: 整个软件系统需要统一的配置文件解析栈。需要确认归属，避免各仓重复实现。
+
+Decision: **不新建仓**。解析机制归 `foray_platform` 的 core target
+（在现有 `param` 上扩展 `config`：分层、include、env 替换、来源追踪、CLI）；
+机器人相关配置值与装配归 `foray_robots`。
+
+Reason:
+- `foray_docs/repository_structure.md` §2 已把「参数系统」划给 `foray_platform`；
+- 同文档 §1 明确把「把 config 拆出独立仓」列为反模式，config 属于装配根；
+- `foray_robots` 已有远端仓，但目前只有骨架，尚无代码/配置；
+- 平台组作为 owner，配置栈被所有仓依赖、变更率低，符合 C1/C2/C3。
+
+Alternatives:
+- 新建 `foray_config`：仅在未来出现非 C++ 消费者、独立发布节奏或仓外工具链时再评估；
+- 放到 `foray_interfaces`：该仓是通信契约仓，不适合运行时配置解析。
+
+Rejected:
+- 各仓自行解析 YAML；
+- 在装配根里实现通用解析库。
+
+---
+
+## Decision
+
+Date: 2026-10-18
+
+Context: HAL 与驱动需要统一的错误语义，现有 `ParamResult` 只服务参数系统。
+
+Decision: 在 core 增加通用 `ErrorCode` / `Error` / `Result<T>` / `Result<void>`，
+公共 API 不抛异常；驱动把 MVS/Livox 原始返回码放入 `Error::vendor_code`。
+`ParamResult` 暂不迁移，后续再统一。
+
+Reason:
+- HAL/驱动/未来算法层都需要同一套错误语义；
+- 保持现有参数 API 兼容，避免一次性大改。
+
+Rejected:
+- 每个模块自定义错误类型；
+- 在公共 API 中使用异常。

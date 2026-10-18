@@ -17,32 +17,35 @@
 │   ├── time_and_clock.md        时钟域与 use_sim_time 语义
 │   ├── parameter_system.md      参数 schema / 校验 / 热加载设计
 │   └── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
-├── foray_platform_core/         L1 纯 C++ 核心库（不依赖 ROS）
+├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
 │   ├── CMakeLists.txt
 │   ├── package.xml              build_type=cmake，供 colcon 识别
 │   ├── cmake/
-│   │   └── foray_platform_coreConfig.cmake.in
+│   │   └── foray_platformConfig.cmake.in
 │   ├── include/foray/platform/
 │   │   ├── time/                Duration · Timestamp · Clock
-│   │   └── param/               schema · snapshot · store · source · manager
+│   │   ├── param/               schema · snapshot · store · source · manager
+│   │   └── result/              ErrorCode · Error · Result<T>
 │   ├── src/
 │   │   ├── time/clock.cpp
-│   │   └── param/               实现与内部校验
+│   │   ├── param/               实现与内部校验
+│   │   └── result/error.cpp
 │   └── test/
 │       ├── time/                时钟单测
-│       └── param/               参数系统单测
+│       ├── param/               参数系统单测
+│       └── result/              错误码 / Result 单测
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板
 ```
 
-> L2 HAL 与 ROS 适配层尚未开始，落地后在此补充对应目录。
+> L2 HAL（同包 `hal` target）与 ROS 适配层按计划逐步加入；当前已落地 `core` target。
 
 ## 目录职责
 
 | 路径 | 职责 | 依赖约束 |
 |---|---|---|
-| `foray_platform_core/` | L1 平台基础：时间/时钟、参数系统 | **不得依赖 ROS 2、不得依赖任何业务仓** |
+| `foray_platform/` | L1 core：时间/时钟、参数系统、错误码；L2 hal 按计划加入 | **不得依赖 ROS 2、不得依赖任何业务仓** |
 | `docs/` | 设计文档 | — |
 | `.foray-layer` | 声明 `layer: L1`、`depends_on_layers: [X2]` | CI 校验依赖方向 |
 

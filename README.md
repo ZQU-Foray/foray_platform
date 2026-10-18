@@ -10,18 +10,18 @@ L1 平台基础 + L2 下行 HAL
 
 ## 快速开始
 
-> 当前已落地 L1 的时间/时钟抽象与参数系统（`foray_platform_core`，**不依赖 ROS**）。
-> L2 HAL 与 ROS 适配层尚未开始。
+> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform` 包，**不依赖 ROS**）。
+> L2 HAL 与 ROS 适配层正在按计划落地。
 
 ### 仅构建核心库（无需 ROS）
 
 依赖：CMake ≥ 3.16、C++17 编译器、yaml-cpp；测试另需 GTest。
 
 ```bash
-cmake -S foray_platform_core -B ~/.cache/foray-platform-build/core \
+cmake -S foray_platform -B ~/.cache/foray-platform-build/platform \
       -DCMAKE_BUILD_TYPE=Release
-cmake --build ~/.cache/foray-platform-build/core -j"$(nproc)"
-ctest --test-dir ~/.cache/foray-platform-build/core --output-on-failure
+cmake --build ~/.cache/foray-platform-build/platform -j"$(nproc)"
+ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
 ```
 
 > ⚠️ 本仓位于 SMB 共享盘，构建目录必须放本地盘（共享盘不支持符号链接）。
@@ -57,7 +57,7 @@ colcon test --event-handlers console_direct+
 ## 接口
 
 > 本仓是 **C++ 库**，不是 ROS 节点。这里的「接口」指**公共 C++ API**；
-> `foray_platform_core` 不直接定义 ROS 话题/服务。需要跨进程的契约由
+> `foray_platform` 的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
 > `foray_interfaces`（X2）定义；后续 ROS 适配层落地后再在本节补充话题/参数清单。
 >
 > 未冻结的接口只描述**契约方向**，不承诺具体签名。
@@ -68,6 +68,7 @@ colcon test --event-handlers console_direct+
 |---|---|---|---|
 | `foray/platform/time/time.hpp` | `foray::platform::time` | `Duration` · `Timestamp` · `Clock` · `ClockDomain` · `SystemClock` · `SteadyClock` · `ManualClock` | 纳秒精度；时间点只在同一时钟域内比较；仿真时钟未就绪时 `now()` 为零且 `is_ready() == false` |
 | `foray/platform/param/param.hpp` | `foray::platform::param` | `ParamType` · `ParamValue` · `ParamSpec` · `ParamSchema` · `ParamSnapshot` · `ParamStore` · `ParamSource` · `MapParamSource` · `YamlFileParamSource` · `ParamManager` · `ParamResult` / `ParamError` | 类型化 schema + 校验 + 热加载；读路径为不可变快照，写路径在非实时线程整批原子生效 |
+| `foray/platform/result/result.hpp` | `foray::platform` | `ErrorCode` · `Error` · `Result<T>` · `Result<void>` | 公共 API 不抛异常；驱动原始错误码保存在 `Error::vendor_code` |
 
 **时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 
@@ -84,8 +85,7 @@ colcon test --event-handlers console_direct+
 | 模块 | 预期接口形态 | 状态 |
 |---|---|---|
 | 数学/几何/滤波 | 无 ROS 的纯函数与类：EKF、PID、坐标变换 | 未开始 |
-| 数据结构 | `LockFreeQueue<T>`、`ThreadPool` | 未开始 |
-| 错误码 | `Result<T>` / `ErrorCode`，生命周期与错误上下文 | 未开始 |
+| 数据结构 | `SpscQueue<T>`（HAL 前置）、`LockFreeQueue<T>`、`ThreadPool` | 进行中 |
 | 日志/录制/回放 | X4 底座：日志、录制、回放接口 | 未开始 |
 | 状态编码器 | 纯函数，训练与部署共用 | 未开始 |
 

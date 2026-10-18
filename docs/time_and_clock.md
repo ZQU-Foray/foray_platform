@@ -1,7 +1,7 @@
 # 时间与时钟
 
 > 所属层：L1 平台基础 · 对应横切面：X3 时间与同步
-> 代码：`foray_platform_core/include/foray/platform/time/`
+> 代码：`foray_platform/include/foray/platform/time/`
 
 ## 1. 目标
 
@@ -96,7 +96,7 @@ ROS 适配层应在 `/clock` 回调中调用 `set(now)`，不要自行累加时�
 2. `false`：`SystemClock` 负责节点时间；
 3. `true`：订阅 `/clock`，回调中调用 `ManualClock::set()`；
 4. 以 `Clock&` 注入到需要时间的模块，模块不直接持有 `rclcpp::Clock`；
-5. 适配层单独成包，`foray_platform_core` 永远不链接 `rclcpp`。
+5. 适配层单独成包，`foray_platform` 的 core target 永远不链接 `rclcpp`。
 
 ## 6. 线程安全
 
@@ -107,7 +107,7 @@ ROS 适配层应在 `/clock` 回调中调用 `set(now)`，不要自行累加时�
 
 ## 7. 测试覆盖
 
-`foray_platform_core/test/time/clock_test.cpp` 覆盖：
+`foray_platform/test/time/clock_test.cpp` 覆盖：
 
 - `Duration` / `Timestamp` 运算与比较；
 - 三种时钟的域、单调性与就绪语义；
