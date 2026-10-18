@@ -256,6 +256,7 @@ TEST_F(LidarTest, RecoversAfterFailure) {
     EXPECT_EQ(lidar->state(), hal::DeviceState::kStreaming);
     EXPECT_GE(lidar->stats().reconnects, 1U);
     EXPECT_GE(api->uninit_calls, 1);
+    EXPECT_GE(api->reset_calls, 1);
 }
 
 #ifndef FORAY_DRIVER_LIVOX_HAS_SDK

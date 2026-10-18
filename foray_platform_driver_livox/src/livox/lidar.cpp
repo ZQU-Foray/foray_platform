@@ -354,6 +354,17 @@ Result<void> LidarImpl::recover_locked() {
     state_.store(hal::DeviceState::kRecovering, std::memory_order_release);
     // 先停止解析线程，再释放队列/帧池；设备已离线时线程可能仍在轮询。
     stop_locked();
+
+    // 请求设备复位；离线时失败是预期路径，不阻断重新枚举。
+    const std::uint32_t handle = handle_.load(std::memory_order_relaxed);
+    if (handle != 0) {
+        const Result<void> reset = api_->request_reset(handle);
+        if (!reset.ok()) {
+            sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+            last_vendor_code_.store(reset.error().vendor_code, std::memory_order_relaxed);
+        }
+    }
+
     release_resources_locked();
     state_.store(hal::DeviceState::kClosed, std::memory_order_release);
 
