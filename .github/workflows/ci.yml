@@ -153,19 +153,39 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libyaml-cpp-dev libgtest-dev
 
-      - name: Configure
+      - name: Configure / build / test / install
         if: steps.detect.outputs.found == 'true'
-        run: >
-          cmake -S foray_platform -B build-platform
-          -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="$PWD/build/cmake-prefix"
 
-      - name: Build
-        if: steps.detect.outputs.found == 'true'
-        run: cmake --build build-platform -j"$(nproc)"
+          # 合并包：core + hal 一次构建/测试/安装
+          cmake -S foray_platform -B build/platform \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+            -DFORAY_PLATFORM_BUILD_TESTS=ON
+          cmake --build build/platform -j"$(nproc)"
+          ctest --test-dir build/platform --output-on-failure
+          cmake --install build/platform
 
-      - name: Test
-        if: steps.detect.outputs.found == 'true'
-        run: ctest --test-dir build-platform --output-on-failure
+          # 驱动包：SDK 默认 OFF，逐个探测；不存在则跳过
+          for pkg in foray_platform_driver_livox foray_platform_driver_hikvision; do
+            if [ ! -f "$pkg/CMakeLists.txt" ]; then
+              echo "跳过 $pkg（尚未落地）"
+              continue
+            fi
+            cmake -S "$pkg" -B "build/$pkg" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+              -DCMAKE_PREFIX_PATH="$PREFIX" \
+              -DFORAY_PLATFORM_BUILD_TESTS=ON \
+              -DFORAY_BUILD_DRIVER_HIKVISION=OFF \
+              -DFORAY_BUILD_DRIVER_LIVOX=OFF
+            cmake --build "build/$pkg" -j"$(nproc)"
+            ctest --test-dir "build/$pkg" --output-on-failure
+            cmake --install "build/$pkg"
+          done
 
   # ---- ROS 2 构建与测试 ----
   # 适用于 colcon 工作空间仓库（如 foray_navigation）。
@@ -200,7 +220,10 @@ jobs:
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+          colcon build --symlink-install --cmake-args \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFORAY_BUILD_DRIVER_HIKVISION=OFF \
+            -DFORAY_BUILD_DRIVER_LIVOX=OFF
 
       - name: 测试 (colcon test)
         if: steps.detect.outputs.found == 'true'
