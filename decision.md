@@ -242,3 +242,85 @@ Alternatives:
 Rejected:
 - 在 HAL 公共头中暴露 SDK 缓冲类型；
 - 消费者直接调用 `MV_CC_FreeImageBuffer`。
+
+---
+
+## Decision
+
+Date: 2026-10-18
+
+Context: Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是进程级单例，
+多雷达共享全局回调；回调线程不允许加锁/分配，且关闭一个雷达时可能有回调在飞行。
+
+Decision:
+- 增加 `LivoxRuntime`：引用计数管理 Init/Uninit，按 handle 路由全局回调；
+- 每个雷达一个 `CallbackSink` + `SpscQueue<PacketSlot>`；
+- `close()` 只把 sink 从路由表移除并移入墓地，等 `LivoxLidarSdkUninit()`
+  返回后统一销毁；
+- 回调只做长度校验、接收时间戳与一次 memcpy，解析/组帧在独立线程。
+
+Reason:
+- 避免在 SDK 回调中加锁或分配；
+- 墓地机制保证回调线程不会访问已释放内存；
+- 多雷达共享一份 SDK 初始化，符合 SDK 的进程级约束。
+
+Alternatives:
+- 每个雷达独立初始化 SDK：SDK 不支持；
+- 回调中直接解析：会增加回调延迟并可能阻塞收包。
+
+Rejected:
+- 在回调中调用控制接口或重连；
+- `close()` 后立即销毁 sink。
+
+---
+
+## Decision
+
+Date: 2026-10-18
+
+Context: Livox 包不携带 line 字段，`time_type` 语义与绝对时间可用性不一致，
+双回波 0x11 在 SDK v1.3.1 公共头中无结构定义。
+
+Decision:
+- `line = i % line_num`，按包内点序号计算，与 `livox_ros_driver2` 一致；
+- `time_type` 0 → NoSync、1 → PTP、2 → GPS PPS、3/4 → PPS、其他 → Unknown；
+- 只有 PTP / GPS PPS 才把设备时间写入 `base_time` / `stamp`；
+  NoSync / PPS / Unknown 一律置零；
+- 双回波 0x11 返回 `kUnsupportedFormat`，不猜测布局。
+
+Reason:
+- 不伪造绝对时间，避免与其它传感器静默混用时间域；
+- 与社区驱动保持字段语义一致，便于 point_lio/FAST-LIO 兼容；
+- 未定义结构不能靠猜测解析。
+
+Alternatives:
+- PPS 时用主机时间补齐：会引入未标定的偏差；
+- 自行猜测双回波布局：跨固件版本风险高。
+
+Rejected:
+- 在 HAL 内做跨传感器时间对齐；
+- NoSync 时用 `SystemClock` 替换设备时间。
+
+---
+
+## Decision
+
+Date: 2026-10-18
+
+Context: 本机开发/CI 环境不一定安装 Livox SDK2，驱动仍需要可构建、可测试。
+
+Decision:
+- `FORAY_BUILD_DRIVER_LIVOX` 默认 OFF；
+- OFF 时构建 stub，所有控制接口返回 `kSdkUnavailable`，下游仍可链接；
+- ON 时用 `LIVOX_SDK2_ROOT`/系统路径 `find_path` + `find_library`，
+  找不到直接 `FATAL_ERROR`，不静默降级；
+- 单元测试通过注入 `LivoxApi` mock 运行，完全不依赖 SDK/硬件。
+
+Reason:
+- 保持 CI 与无 SDK 开发环境绿灯；
+- SDK 缺失在配置期显式失败，避免运行时才暴露；
+- mock 覆盖协议解析、组帧、路由与恢复逻辑。
+
+Rejected:
+- 把 SDK 二进制提交到仓库；
+- OFF 时仍假装初始化成功。

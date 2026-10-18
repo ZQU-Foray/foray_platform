@@ -18,7 +18,9 @@
 │   ├── parameter_system.md      参数 schema / 校验 / 热加载设计
 │   ├── config_stack.md          分层配置、include、env 与导出
 │   ├── hal_architecture.md      HAL 生命周期、帧池与零拷贝
-│   └── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
+│   ├── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
+│   ├── driver_livox.md          Livox 驱动：运行时、解析、组帧与时间语义
+│   └── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
 ├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
 │   ├── CMakeLists.txt
 │   ├── package.xml              build_type=cmake，供 colcon 识别
@@ -44,12 +46,30 @@
 │       ├── container/           SPSC 队列单测
 │       ├── config/              分层 / include / env / 导出单测
 │       └── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
+├── foray_platform_driver_livox/ Livox SDK2 驱动（纯 CMake，不依赖 ROS）
+│   ├── CMakeLists.txt
+│   ├── package.xml
+│   ├── cmake/
+│   │   └── foray_platform_driver_livoxConfig.cmake.in
+│   ├── include/foray/platform/driver/livox/
+│   │   └── lidar.hpp            公共工厂（无 SDK 类型）
+│   ├── src/livox/
+│   │   ├── lidar.cpp/.hpp       生命周期、配置、解析线程
+│   │   ├── livox_runtime.cpp/.hpp  进程级 SDK 单例与 handle 路由
+│   │   ├── livox_api.hpp        SDK 函数表抽象
+│   │   ├── livox_api_real.cpp   SDK ON 时的真实实现
+│   │   ├── livox_api_stub.cpp   SDK OFF 时的 stub
+│   │   ├── packet_parser.cpp/.hpp  36 字节头与点/IMU 解析
+│   │   ├── frame_assembler.cpp/.hpp  组帧与逐点时间
+│   │   └── config_json.cpp/.hpp  Livox 网络 JSON
+│   └── test/livox/              mock 函数表与单测
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板
 ```
 
-> L2 HAL（同包 `hal` target）与 ROS 适配层按计划逐步加入；当前已落地 `core` target。
+> L2 HAL（同包 `hal` target）已落地；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
+> Hikvision 驱动与 ROS 适配层按计划加入。
 
 ## 目录职责
 

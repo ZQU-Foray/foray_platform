@@ -27,6 +27,29 @@ ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
 > ⚠️ 本仓位于 SMB 共享盘，构建目录必须放本地盘（共享盘不支持符号链接）。
 > 这是 `foray_ws` 元仓构建约定的同一条纪律。
 
+### 构建 Livox 驱动（可选）
+
+驱动包默认 **不依赖 SDK**，用 stub 构建并跑 mock 测试：
+
+```bash
+cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+      -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
+      -DFORAY_BUILD_DRIVER_LIVOX=OFF
+cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
+ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
+```
+
+真实硬件构建需先安装 Livox SDK2，再打开开关：
+
+```bash
+cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+      -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
+      -DFORAY_BUILD_DRIVER_LIVOX=ON \
+      -DLIVOX_SDK2_ROOT=/usr/local
+```
+
+详见 [驱动部署](docs/driver_deployment.md)。
+
 ### 在 ROS 2 工作空间中构建
 
 ```bash
@@ -52,7 +75,7 @@ colcon test --event-handlers console_direct+
 | 类型 | 依赖 |
 |---|---|
 | **自研仓** | `foray_interfaces`（X2 接口契约层） |
-| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · 各传感器官方 SDK（Livox / Hikvision 等） |
+| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · Livox SDK2（可选，驱动编译开关）· Hikvision MVS（可选，待落地） |
 
 ## 接口
 
@@ -105,6 +128,21 @@ colcon test --event-handlers console_direct+
 | 执行器 | 底盘 · 云台 · 发射机构 | 指令 + 安全状态；内置超时归零 | 未开始 |
 | 总线 | 串口 · CAN · USB | 字节流/帧读写，设备无关 | 未开始 |
 
+### 驱动包
+
+| 包 | 接口 | 状态 |
+|---|---|---|
+| `foray_platform_driver_livox` | `foray::platform::driver::livox::make_lidar(const hal::LidarConfig&)` | **代码与 mock 测试已完成**；真实 SDK 构建/HIL 待本机安装 SDK2 后验证 |
+| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | 未开始（M7/M8） |
+
+Livox 驱动特性：
+
+- Livox SDK2 进程级单例 + 引用计数，多雷达按 handle 路由；
+- SDK 回调只做长度校验、时间戳与一次拷贝，解析/组帧在独立线程；
+- 支持高精度/低精度/球坐标点云与 IMU；双回波 `0x11` 显式返回 `kUnsupportedFormat`；
+- `time_type` → `TimestampSync` 映射，NoSync/PPS 不伪造绝对时间；
+- 编译期 `FORAY_BUILD_DRIVER_LIVOX=ON/OFF`；OFF 时 `open()` 返回 `kSdkUnavailable`。
+
 **急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
 位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，
 时间源固定为 `SteadyClock`（见 [时间与时钟](docs/time_and_clock.md)）。
@@ -135,6 +173,8 @@ colcon test --event-handlers console_direct+
 - [统一配置解析栈](docs/config_stack.md)——分层、include、环境变量、来源追踪与导出
 - [L2 HAL 架构](docs/hal_architecture.md)——生命周期、线程模型、帧池与零拷贝边界
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
+- [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
+- [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
 
 ## 参考
 

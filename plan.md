@@ -4,8 +4,9 @@
 
 - [x] 定义时间与时钟抽象（含 `use_sim_time` 语义）
 - [x] 搭参数系统骨架（schema + 校验 + 热加载）
-- [ ] 定义 HAL 抽象接口（传感器 / 执行器 / 总线 / 设备生命周期）
+- [x] 定义 HAL 抽象接口（传感器 / 执行器 / 总线 / 设备生命周期）
 - [ ] 接一个真实驱动跑通「一个传感器 → 一个话题」
+  - Livox 驱动代码与 mock 测试已完成；真实 SDK 构建 + HIL 待部署验证
 - [ ] 实现急停硬路径（独立实时线程 + 超时定时器）
 
 ### 任务 1 交付物
@@ -82,15 +83,31 @@
 - `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
 - 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
 
+### M9/M10 交付物（Livox）
+
+- `foray_platform_driver_livox/`（纯 CMake，不依赖 ROS）
+  - 公共工厂 `driver::livox::make_lidar(const hal::LidarConfig&)`，公共头无 SDK 类型；
+  - `livox_api.hpp` 函数表抽象 + stub/真实实现，`FORAY_BUILD_DRIVER_LIVOX` 开关；
+  - `LivoxRuntime`：进程级 SDK 引用计数、handle 路由、sink 墓地；
+  - 原始包环（`SpscQueue<PacketSlot>`）+ 解析线程 + `FramePool` 组帧；
+  - 包解析：0x01 高精度 / 0x02 低精度 / 0x03 球坐标 / 0x00 IMU；
+  - 时间映射：`time_type` 0/1/2/3/4/未知 → `TimestampSync`；
+  - JSON 生成（0600）、本机 IP 校验、多雷达、退避恢复；
+- 文档：[docs/driver_livox.md](docs/driver_livox.md)、
+  [docs/driver_deployment.md](docs/driver_deployment.md)；
+- 单测：27 个用例，mock 覆盖生命周期、路由、恢复、解析、组帧；
+  常规 / ASan+UBSan / TSan 全绿；安装后下游 `find_package` 通过；
+- **未完成**：真实 SDK2 构建与 HIL（本机尚未安装 SDK2）、双回波 `0x11`。
+
 ## 当前 Agent State
 
-M6_DONE
+M10_CODE_DONE_SDK_PENDING
 
 ## Before Snapshot
 
-commit hash:   af5b16a
+commit hash:   d40e647
 branch:        feat/l1-foundation
-modified files: 包合并（foray_platform_core → foray_platform）；新增 result/；更新 README/tree/decision/ci/plan
+modified files: 新增 foray_platform_driver_livox；更新 README/tree/decision/plan/ci/docs
 risk level:    L1
 
 ## 模糊点与待确认项
@@ -114,7 +131,9 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（127 个用例）
+- [x] 每个新增模块带独立可执行测试（平台 127 个 + Livox 驱动 27 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
+- [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
+- [ ] Livox 真实 SDK2 构建与 HIL（需要安装 SDK2 并连接雷达）
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯
