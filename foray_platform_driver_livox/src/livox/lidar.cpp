@@ -1,5 +1,3 @@
-#include "foray/platform/driver/livox/lidar.hpp"
-
 #include <algorithm>
 #include <chrono>
 #include <new>
@@ -595,11 +593,3 @@ Result<std::unique_ptr<hal::Lidar>> make_lidar(const hal::LidarConfig& config,
 }
 
 } // namespace foray::platform::driver::livox::detail
-
-namespace foray::platform::driver::livox {
-
-Result<std::unique_ptr<hal::Lidar>> make_lidar(const hal::LidarConfig& config) {
-    return detail::make_lidar(config, detail::make_livox_api());
-}
-
-} // namespace foray::platform::driver::livox

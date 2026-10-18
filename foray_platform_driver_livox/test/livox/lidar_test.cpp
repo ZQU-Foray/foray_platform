@@ -8,7 +8,6 @@
 #include <thread>
 #include <vector>
 
-#include "foray/platform/driver/livox/lidar.hpp"
 #include "foray/platform/time/duration.hpp"
 #include "livox/lidar_factory.hpp"
 #include "livox/livox_runtime.hpp"
@@ -277,19 +276,6 @@ TEST_F(LidarTest, RecoversAfterFailure) {
     EXPECT_GE(api->uninit_calls, 1);
     EXPECT_GE(api->reset_calls, 1);
 }
-
-#ifndef FORAY_DRIVER_LIVOX_HAS_SDK
-TEST_F(LidarTest, DefaultFactoryReportsSdkUnavailable) {
-    const std::string ip = "192.168.1.130";
-    Result<std::unique_ptr<hal::Lidar>> created =
-        foray::platform::driver::livox::make_lidar(make_config(ip, "lidar"));
-    ASSERT_TRUE(created.ok()) << created.error().message;
-
-    const Result<void> opened = created.value()->open();
-    EXPECT_FALSE(opened.ok());
-    EXPECT_EQ(opened.error().code, ErrorCode::kSdkUnavailable);
-}
-#endif
 
 } // namespace
 } // namespace foray::platform::driver::livox::detail

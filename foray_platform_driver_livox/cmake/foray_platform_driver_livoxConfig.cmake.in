@@ -1,9 +1,21 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+
+# 让下游也能用随包安装的 FindLivoxSDK2.cmake。
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
 find_dependency(Threads)
 find_dependency(foray_platform)
 
+# 静态驱动库会把 SDK 以 LINK_ONLY 依赖传给下游；由下游环境重新定位。
+if(@FORAY_DRIVER_LIVOX_NEEDS_SDK_AT_LINK@)
+    find_dependency(LivoxSDK2)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/foray_platform_driver_livoxTargets.cmake")
+
+# 已安装产物的能力：1=真实 SDK 后端，0=stub。
+set(FORAY_DRIVER_LIVOX_HAS_SDK @FORAY_DRIVER_LIVOX_HAS_SDK_VALUE@)
 
 check_required_components(foray_platform_driver_livox)
