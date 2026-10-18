@@ -72,6 +72,7 @@ colcon test --event-handlers console_direct+
 | `foray/platform/container/spsc_queue.hpp` | `foray::platform::container` | `SpscQueue<T>` | 有界、无锁、单生产者/单消费者；满时 `try_push` 返回 false 并累计 `dropped()` |
 | `foray/platform/config/config.hpp` | `foray::platform::config` | `ConfigDocument` · `ConfigResolver` · `ConfigSnapshot` · `ConfigExporter` · `ConfigTool` · `MapEnvProvider` | 分层 YAML、include、`${ENV}`、`FORAY_<PARAM>` 覆盖、provenance；复用 `param` 做校验 |
 | `foray/platform/hal/hal.hpp` | `foray::platform::hal` | `Device` · `Camera` · `Lidar` · `ImageFrame` · `PointCloudFrame` · `ImuSample` · `FrameLease` · `FramePool` · `CameraConfig` / `LidarConfig` | 单写单读、最新帧邮箱；SDK 边界一次拷贝，租约之后零拷贝；时间戳带 `TimestampSync` |
+| `foray/platform/hal/config_binder.hpp` | `foray::platform::hal` | `make_camera_param_schema` · `make_lidar_param_schema` · `bind_camera_config` · `bind_lidar_config` | 复用 `param` schema；跨字段校验（transport/serial/trigger）；不探测设备能力 |
 
 **时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 

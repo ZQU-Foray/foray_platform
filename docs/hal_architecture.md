@@ -26,11 +26,11 @@ foray_platform_ros  ->  foray_platform::hal  ->  foray_platform::core
 ## 3. 设备生命周期
 
 ```text
-kClosed -> kOpening -> kStreaming -> kStopping -> kClosed
+kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
               |            |
               +-> kError <-+
                      |
-                kRecovering -> kOpening ...
+                kRecovering -> kOpen ...
 ```
 
 约定：
@@ -118,11 +118,23 @@ kFree -> kWriting -> kPublished -> kReading -> kFree
 - 连续超时由上层决定是否 `recover()`；
 - 批量配置校验使用 `ParamResult`，一次返回全部错误。
 
-## 8. 配置绑定（后续）
+## 8. 配置绑定
 
 HAL 只接收 `CameraConfig` / `LidarConfig`，不解析 YAML。
-后续 `ConfigBinder` 将 `ConfigSnapshot` / `ParamSnapshot` 映射为这些结构，
-并实现跨字段约束（transport 与 serial/ip、trigger 与 frame_rate）。
+`hal/config_binder.hpp` 提供：
+
+- `make_camera_param_schema()` / `make_lidar_param_schema()`：字段名与默认值；
+- `bind_camera_config()` / `bind_lidar_config()`：把已校验的
+  `param::ParamSnapshot` 映射为 HAL 配置。
+
+跨字段约束在 binder 中实现：
+
+- USB3 必须有 serial；GigE 必须有 serial 或 IP；
+- 触发开启时 `frame_rate_hz` 必须为 0；
+- 像素格式必须是本期支持的 8 位 Mono/Bayer；
+- 雷达必须有 `ip_address` 与 `host_ip`。
+
+设备能力（如某个 GenICam 节点是否存在）由驱动在 `open()` 时报告。
 
 ## 9. 测试
 

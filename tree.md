@@ -30,19 +30,20 @@
 │   │   ├── result/              ErrorCode · Error · Result<T>
 │   │   ├── container/           有界 SPSC 队列（header-only）
 │   │   ├── config/              document · resolver · snapshot · exporter · tool
-│   │   └── hal/                 Device · Camera · Lidar · 帧 · FrameLease/FramePool
+│   │   └── hal/                 Device · Camera · Lidar · 帧 · FrameLease/FramePool · ConfigBinder
 │   ├── src/
 │   │   ├── time/clock.cpp
 │   │   ├── param/               实现、内部校验与 YAML 工具
 │   │   ├── result/error.cpp
-│   │   └── config/              resolver · exporter · tool
+│   │   ├── config/              resolver · exporter · tool
+│   │   └── hal/config_binder.cpp
 │   └── test/
 │       ├── time/                时钟单测
 │       ├── param/               参数系统单测
 │       ├── result/              错误码 / Result 单测
 │       ├── container/           SPSC 队列单测
 │       ├── config/              分层 / include / env / 导出单测
-│       └── hal/                 类型 / 配置默认值 / 帧池与租约单测
+│       └── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板

@@ -8,6 +8,8 @@ namespace foray::platform::hal {
 enum class DeviceState {
     kClosed,
     kOpening,
+    /// @brief 已打开、尚未开始取流。
+    kOpen,
     kStreaming,
     kStopping,
     kError,
@@ -74,6 +76,8 @@ constexpr const char* to_string(DeviceState state) noexcept {
         return "closed";
     case DeviceState::kOpening:
         return "opening";
+    case DeviceState::kOpen:
+        return "open";
     case DeviceState::kStreaming:
         return "streaming";
     case DeviceState::kStopping:

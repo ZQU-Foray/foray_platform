@@ -35,16 +35,23 @@ add_library(foray_platform::core ALIAS foray_platform_core)
 # 安装后的导入名保持 foray_platform::core。
 set_target_properties(foray_platform_core PROPERTIES EXPORT_NAME core)
 
-# L2 HAL 目前是 header-only 接口；后续加入 ConfigBinder 时再转为普通库。
-add_library(foray_platform_hal INTERFACE)
+add_library(foray_platform_hal
+    src/hal/config_binder.cpp
+)
 add_library(foray_platform::hal ALIAS foray_platform_hal)
 set_target_properties(foray_platform_hal PROPERTIES EXPORT_NAME hal)
 target_include_directories(foray_platform_hal
-    INTERFACE
+    PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(foray_platform_hal INTERFACE foray_platform_core)
+target_link_libraries(foray_platform_hal PUBLIC foray_platform_core)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(foray_platform_hal PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 target_include_directories(foray_platform_core
     PUBLIC
@@ -82,6 +89,8 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/config/exporter_test.cpp
         test/hal/types_test.cpp
         test/hal/frame_pool_test.cpp
+        test/hal/config_binder_test.cpp
+        test/hal/fake_sensor_test.cpp
     )
     target_link_libraries(foray_platform_tests
         PRIVATE foray_platform_hal foray_platform_core GTest::gtest_main

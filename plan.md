@@ -72,13 +72,23 @@
   单写单读并发；ASan/UBSan/TSan 通过；
 - 设计说明：[docs/hal_architecture.md](docs/hal_architecture.md)。
 
+### M6 交付物
+
+- `foray_platform/include/foray/platform/hal/config_binder.hpp`
+  - `make_camera_param_schema()` / `make_lidar_param_schema()`；
+  - `bind_camera_config()` / `bind_lidar_config()`；
+  - 跨字段约束：transport 与 serial/ip、trigger 与 frame_rate、像素格式支持；
+- `foray_platform_hal` 从 interface 转为普通库；
+- `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
+- 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
+
 ## 当前 Agent State
 
-M5_DONE
+M6_DONE
 
 ## Before Snapshot
 
-commit hash:   52619e5
+commit hash:   af5b16a
 branch:        feat/l1-foundation
 modified files: 包合并（foray_platform_core → foray_platform）；新增 result/；更新 README/tree/decision/ci/plan
 risk level:    L1
@@ -104,7 +114,7 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（112 个用例）
+- [x] 每个新增模块带独立可执行测试（127 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯
