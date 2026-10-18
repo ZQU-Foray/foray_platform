@@ -21,19 +21,23 @@ hal::LidarConfig backend_config() {
 
 #if FORAY_DRIVER_LIVOX_HAS_SDK
 TEST(BackendTest, PublicFactoryConstructsWithSdk) {
-    Result<std::unique_ptr<hal::Lidar>> created = make_lidar(backend_config());
+    const hal::LidarConfig config = backend_config();
+    Result<std::unique_ptr<hal::Lidar>> created = make_lidar(config);
     ASSERT_TRUE(created.ok()) << created.error().message;
     EXPECT_NE(created.value(), nullptr);
     // 不调用 open()：本用例只验证真实后端能构造，避免测试依赖硬件与网络。
+    std::filesystem::remove_all(config.runtime_dir);
 }
 #else
 TEST(BackendTest, PublicFactoryReportsSdkUnavailable) {
-    Result<std::unique_ptr<hal::Lidar>> created = make_lidar(backend_config());
+    const hal::LidarConfig config = backend_config();
+    Result<std::unique_ptr<hal::Lidar>> created = make_lidar(config);
     ASSERT_TRUE(created.ok()) << created.error().message;
 
     const Result<void> opened = created.value()->open();
     EXPECT_FALSE(opened.ok());
     EXPECT_EQ(opened.error().code, ErrorCode::kSdkUnavailable);
+    std::filesystem::remove_all(config.runtime_dir);
 }
 #endif
 
