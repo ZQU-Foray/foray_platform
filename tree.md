@@ -25,7 +25,8 @@
 │   ├── include/foray/platform/
 │   │   ├── time/                Duration · Timestamp · Clock
 │   │   ├── param/               schema · snapshot · store · source · manager
-│   │   └── result/              ErrorCode · Error · Result<T>
+│   │   ├── result/              ErrorCode · Error · Result<T>
+│   │   └── container/           有界 SPSC 队列（header-only）
 │   ├── src/
 │   │   ├── time/clock.cpp
 │   │   ├── param/               实现与内部校验
@@ -33,7 +34,8 @@
 │   └── test/
 │       ├── time/                时钟单测
 │       ├── param/               参数系统单测
-│       └── result/              错误码 / Result 单测
+│       ├── result/              错误码 / Result 单测
+│       └── container/           SPSC 队列单测
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板

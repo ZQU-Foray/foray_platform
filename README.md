@@ -69,6 +69,7 @@ colcon test --event-handlers console_direct+
 | `foray/platform/time/time.hpp` | `foray::platform::time` | `Duration` · `Timestamp` · `Clock` · `ClockDomain` · `SystemClock` · `SteadyClock` · `ManualClock` | 纳秒精度；时间点只在同一时钟域内比较；仿真时钟未就绪时 `now()` 为零且 `is_ready() == false` |
 | `foray/platform/param/param.hpp` | `foray::platform::param` | `ParamType` · `ParamValue` · `ParamSpec` · `ParamSchema` · `ParamSnapshot` · `ParamStore` · `ParamSource` · `MapParamSource` · `YamlFileParamSource` · `ParamManager` · `ParamResult` / `ParamError` | 类型化 schema + 校验 + 热加载；读路径为不可变快照，写路径在非实时线程整批原子生效 |
 | `foray/platform/result/result.hpp` | `foray::platform` | `ErrorCode` · `Error` · `Result<T>` · `Result<void>` | 公共 API 不抛异常；驱动原始错误码保存在 `Error::vendor_code` |
+| `foray/platform/container/spsc_queue.hpp` | `foray::platform::container` | `SpscQueue<T>` | 有界、无锁、单生产者/单消费者；满时 `try_push` 返回 false 并累计 `dropped()` |
 
 **时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 

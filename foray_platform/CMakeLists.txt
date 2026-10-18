@@ -57,6 +57,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
     add_executable(foray_platform_tests
         test/time/clock_test.cpp
         test/result/result_test.cpp
+        test/container/spsc_queue_test.cpp
         test/param/value_test.cpp
         test/param/schema_test.cpp
         test/param/store_test.cpp

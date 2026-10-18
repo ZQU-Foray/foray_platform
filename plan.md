@@ -38,13 +38,22 @@
 - 单测：`foray_platform/test/result/result_test.cpp`；
 - 决策记录：`decision.md` 的包合并、配置栈归属、通用错误类型条目。
 
+### M2 交付物
+
+- `foray_platform/include/foray/platform/container/spsc_queue.hpp`
+  - 有界、无锁、单生产者/单消费者；
+  - 容量向上取 2 的幂；满时 `try_push` 返回 false 并累计 `dropped()`；
+  - `T` 要求可默认构造、移动构造/赋值不抛异常；
+- 单测：`foray_platform/test/container/spsc_queue_test.cpp`；
+- TSan 并发用例通过。
+
 ## 当前 Agent State
 
-M1_DONE
+M2_DONE
 
 ## Before Snapshot
 
-commit hash:   0c742d3
+commit hash:   fb6c309
 branch:        feat/l1-foundation
 modified files: 包合并（foray_platform_core → foray_platform）；新增 result/；更新 README/tree/decision/ci/plan
 risk level:    L1
@@ -70,7 +79,7 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（73 个用例）
+- [x] 每个新增模块带独立可执行测试（80 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯
