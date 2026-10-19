@@ -124,7 +124,7 @@ ldd install/foray_platform_driver_livox/lib/libforay_platform_driver_livox.so | 
 | 设备 | 示例 |
 |---|---|
 | 主机（有线网卡 / 网桥） | `192.168.1.51/24` |
-| Livox Mid-360 | `192.168.1.1xx`（默认由序列号决定） |
+| Livox Mid-360 / Mid-360s | `192.168.1.1xx`（默认由序列号决定） |
 | 子网掩码 | `255.255.255.0` |
 | 网关 | 不需要 |
 
@@ -144,14 +144,33 @@ ip -brief addr show br-lidar
 - 放通 UDP 56100–56500（本驱动默认端口段）；
 - 多雷达时保持同一 host 配置，SDK 按 handle（雷达 IP）路由。
 
-### 2.3 发现与验证
+### 2.3 设备类型与数据链路
+
+- SDK JSON 必须包含对应设备段：
+  - **`"MID360"`** → Mid-360（dev_type 9）；
+  - **`"Mid360s"`** → Mid-360s（dev_type 35，大小写敏感）；
+  - 驱动自动生成时会同时写入两段。
+- 默认使用**单播**：雷达发到 `host_ip:56301`（点云）与 `host_ip:56401`（IMU）；
+  不需要 IGMP 或网桥组播配置。
+- 如使用自定义 JSON 的 `multicast_ip`（组播）：
+
+  ```bash
+  echo 0 | sudo tee /sys/class/net/br-lidar/bridge/multicast_snooping
+  ip maddr show br-lidar | grep 224.1.1.5
+  ```
+
+- 非重复扫描下 `frame_cnt` 无效；驱动用 `frame_duration_ms`（默认 100 ms）
+  切帧。需要 10 Hz 时保持 100，5 Hz 可设 200。
+
+### 2.4 发现与验证
 
 ```bash
 ping 192.168.1.255          # 广播探测
 ip neigh show dev br-lidar  # 查看 ARP
 ```
 
-驱动日志/统计中 `packets_received` 持续增长即说明数据到达。
+驱动日志/统计中 `packets_received` 持续增长即说明数据到达；
+`frames_received` 增长说明时间切帧正常。
 
 ## 3. 时间同步
 
@@ -196,6 +215,8 @@ M7/M8 尚未实现。部署时预计需要：
 - [ ] Livox SDK2 v1.3.1 已安装，`ldd` 能找到 `liblivox_lidar_sdk_shared.so`
 - [ ] 主机网卡与雷达同网段，`host_ip` 在本机
 - [ ] UDP 56100–56500 未被防火墙拦截
+- [ ] JSON 包含设备类型段：`MID360`（9）或 `Mid360s`（35）
+- [ ] `frame_duration_ms` 与目标帧率匹配（10 Hz = 100）
 - [ ] PPS 电平/极性正确，共地
 - [ ] 驱动 `ctest` 全绿（无 SDK 环境用 stub）
 - [ ] 30 分钟长跑：RSS/FD/句柄平稳，`packets_dropped` 可解释

@@ -143,16 +143,20 @@ colcon test --event-handlers console_direct+
 
 | 包 | 接口 | 状态 |
 |---|---|---|
-| `foray_platform_driver_livox` | `foray::platform::driver::livox::make_lidar(const hal::LidarConfig&)` | **代码与 mock 测试已完成**；真实 SDK 构建/HIL 待本机安装 SDK2 后验证 |
+| `foray_platform_driver_livox` | `foray::platform::driver::livox::make_lidar(const hal::LidarConfig&)` | **代码、mock 测试与实机 HIL 已完成**（Mid-360s） |
 | `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | 未开始（M7/M8） |
 
 Livox 驱动特性：
 
 - Livox SDK2 进程级单例 + 引用计数，多雷达按 handle 路由；
+- 同时支持 Mid-360（dev_type 9）与 Mid-360s（dev_type 35）；
 - SDK 回调只做长度校验、时间戳与一次拷贝，解析/组帧在独立线程；
 - 支持高精度/低精度/球坐标点云与 IMU；双回波 `0x11` 显式返回 `kUnsupportedFormat`；
+- 非重复扫描按 `frame_duration_ms` 时间切帧，IMU 加速度由 g 换算为 m/s²；
 - `time_type` → `TimestampSync` 映射，NoSync/PPS 不伪造绝对时间；
-- 编译期 `FORAY_BUILD_DRIVER_LIVOX=ON/OFF`；OFF 时 `open()` 返回 `kSdkUnavailable`。
+- 默认单播，组播作为可选自定义 JSON；
+- 编译期 `FORAY_BUILD_DRIVER_LIVOX=ON/OFF`；OFF 时 `open()` 返回 `kSdkUnavailable`；
+- `FORAY_LIVOX_BUILD_TOOLS=ON` 提供 `foray_livox_dump`（PCD + 俯视 PPM）。
 
 **急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
 位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，

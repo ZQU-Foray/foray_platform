@@ -364,3 +364,41 @@ Rejected:
 - 在 `src/` 下放第三方 SDK 源码；
 - 让 ON 构建的 mock 测试依赖 SDK 运行库；
 - 在安装导出中写死构建机 SDK 路径。
+
+---
+
+## Decision
+
+Date: 2026-10-19
+
+Context: 实机 HIL 发现三类问题：SDK 只识别 Mid-360s（dev_type 35）但 JSON 只有
+`MID360`；SDK 的 handle 与按 IP 手工拼接的字节序不一致；Mid-360 非重复扫描下
+`frame_cnt` 无效导致帧永远不发布。另有 IMU 加速度单位差异。
+
+Decision:
+- 生成 JSON 同时写入 `"MID360"`（dev_type 9）与 `"Mid360s"`（dev_type 35）；
+  缺少对应段时 SDK 会在检测阶段直接返回，不触发 InfoChange；
+- `ipv4_to_handle` / `handle_to_ipv4` 使用 `inet_pton` / `inet_ntop`，
+  handle 即 `sockaddr_in::sin_addr.s_addr`；InfoChange 仍按 serial/IP 回退匹配，
+  并覆盖为 SDK 的实际 handle；
+- 新增 `LidarConfig::frame_duration_ms`（默认 100 ms）；帧边界为
+  `frame_cnt` 变化、`udp_cnt == 0` 或时间窗口到期；
+- Livox IMU 原始加速度单位 g，驱动乘以 `9.80665` 转为 HAL 约定的 m/s²；
+- 默认 JSON 使用**单播**（不写 `multicast_ip`），组播作为可选自定义配置。
+
+Reason:
+- 设备类型键与 handle 表示是 SDK 的硬约束，靠猜测或手工字节序会静默失败；
+- 非重复扫描没有可靠帧号，时间窗口是唯一稳定的切帧方式；
+- 单位统一在驱动边界完成，避免上层误用 g；
+- 单播避开网桥 IGMP/组播转发问题，部署更稳。
+
+Alternatives:
+- 每个机型单独维护 JSON：可用，但驱动在启动前不知道设备型号；
+- 用 `frame_timeout_ms` 兼作时间窗口：语义混淆，且空闲超时可能更长；
+- 在 HAL 保留 g：会让 ROS `sensor_msgs/Imu` 等消费者得到错误量纲。
+
+Rejected:
+- 只写 `MID360` 并让 Mid-360s 走默认配置；
+- 在回调里按 `(a<<24)|...` 解释 handle；
+- 仅依赖 `frame_cnt` 切帧；
+- 把 IMU 原始 g 直接透传给上层。

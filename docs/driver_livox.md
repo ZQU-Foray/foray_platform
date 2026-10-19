@@ -95,7 +95,17 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 
 ## 5. 组帧
 
-- `frame_cnt` 变化或 `udp_cnt == 0` 时结束上一帧；
+帧边界（任一条件）：
+
+- `frame_cnt` 变化（重复扫描的有效帧号）；
+- `udp_cnt == 0` 且当前帧非空（有意义的帧起始）；
+- 距当前帧首包达到 `frame_duration_ms`（默认 100 ms）。
+
+> **Mid-360 非重复扫描下 `frame_cnt` 无效**，`udp_cnt` 也可能不回零；
+> 必须依赖时间窗口切帧，否则会一直累积、永远不发布。
+
+其他约定：
+
 - 首包的 `timestamp` 作为 `base_time` / `device_base_time_ns`；
 - 点缓冲满时丢弃当前帧剩余包，`points_dropped` 累计；
 - 无空闲帧槽时丢帧并 `dropped_frames++`，不阻塞解析线程；
@@ -115,29 +125,28 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 
 - `receive_stamp` 始终是 `SteadyClock` 接收时刻；
 - IMU 单独带 `stamp` / `device_time_ns` / `sync`；
+- **Livox IMU 原始加速度单位是 g**，驱动乘以标准重力 `9.80665`，
+  输出 HAL 约定的 `m/s²`；陀螺保持 `rad/s`；
 - 驱动**不会**用主机时间替换设备时间；需要绝对时间时由 PTP/GPS 或上层换算；
 - 与 `livox_ros_driver2` 的 NoSync 行为不同，避免静默混用时间域。
 
 ## 7. 配置 JSON
 
-`config_json_path` 为空时，驱动按 `host_ip` 生成：
+`config_json_path` 为空时，驱动按 `host_ip` 生成**两个**设备段：
 
 ```json
 {
-  "MID360": {
-    "lidar_net_info": {
-      "cmd_data_port": 56100, "push_msg_port": 56200,
-      "point_data_port": 56300, "imu_data_port": 56400, "log_data_port": 56500
-    },
-    "host_net_info": [{
-      "host_ip": "192.168.1.51", "multicast_ip": "224.1.1.5",
-      "cmd_data_port": 56101, "push_msg_port": 56201,
-      "point_data_port": 56301, "imu_data_port": 56401, "log_data_port": 56501
-    }]
-  }
+  "MID360": { "lidar_net_info": { "...": 0 }, "host_net_info": [{ "...": "..." }] },
+  "Mid360s": { "lidar_net_info": { "...": 0 }, "host_net_info": [{ "...": "..." }] }
 }
 ```
 
+- SDK v1.3.1 用 **`"MID360"`** 表示 Mid-360（dev_type 9），
+  用大小写敏感的 **`"Mid360s"`** 表示 Mid-360s（dev_type 35）；
+- 缺少对应段时，SDK 检测到设备后会在 `type_lidars_cfg_map_` 查不到类型而直接返回，
+  **不会触发 InfoChange**；
+- 默认使用**单播**（不写 `multicast_ip`）；需要组播时在自定义 JSON 中加入
+  `multicast_ip`，并确保主机加入该组播组、网桥允许转发；
 - 端口取 Livox-SDK2 v1.3.1 sample 默认值；
 - 文件权限 `0600`，目录默认 `$XDG_RUNTIME_DIR/foray_livox`；
 - 生成前检查 `host_ip` 是本机网卡地址；自定义 JSON 时跳过该检查；
@@ -176,35 +185,39 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 
 ## 10. 测试
 
-两个测试可执行文件，合计 28 个用例：
+两个测试可执行文件，合计 30 个用例：
 
-- `foray_platform_driver_livox_tests`（27 个，只链 core + mock，不需要 SDK/硬件）：
+- `foray_platform_driver_livox_tests`（29 个，只链 core + mock，不需要 SDK/硬件）：
   - `packet_parser_test`：头字段、高/低/球坐标转换、逐点时间、line、IMU、
-    time_type 映射、越界与双回波；
-  - `config_json_test`：端口、host_ip、文件权限、默认路径；
-  - `frame_assembler_test`：变帧发布、空闲超时、NoSync 时间置零、溢出、槽位耗尽；
-  - `lidar_test`：完整生命周期、点云/IMU、统计、超时、多 handle 路由、恢复。
+    time_type 映射、handle 字节序、越界与双回波；
+  - `config_json_test`：端口、host_ip、文件权限、默认路径、`MID360` + `Mid360s`；
+  - `frame_assembler_test`：变帧发布、时间窗口切帧、空闲超时、NoSync 时间置零、
+    溢出、槽位耗尽；
+  - `lidar_test`：完整生命周期、点云/IMU（含 g→m/s²）、统计、超时、
+    多 handle 路由、SDK handle 与 IP 预绑定不一致时的回退、恢复。
 - `foray_platform_driver_livox_backend_tests`（1 个）：
   - OFF 断言公共工厂 `open()` 返回 `kSdkUnavailable`；
   - ON 只验证真实后端能构造，不打开设备。
 
 验证记录：
 
-- 常规构建：28/28 通过（OFF 与 ON）；
-- ASan + UBSan：28/28 通过；
-- TSan：28/28 通过（mock 的 `uninit()` 模拟 SDK 等待回调归零）；
+- 常规构建：30/30 通过（OFF 与 ON）；
+- ASan + UBSan：30/30 通过；
+- TSan：30/30 通过（mock 的 `uninit()` 模拟 SDK 等待回调归零）；
 - `ldd`：core 测试不出现 Livox SDK；backend 测试在 ON 下链接 SDK；
 - 安装后下游 `find_package(foray_platform_driver_livox)` 可链接
   `foray_platform::driver_livox`；ON 静态库经 `find_dependency(LivoxSDK2)` 重新定位。
 
 ## 11. 已知限制
 
-- 真实 SDK 构建/链接已在开发机验证；实机读取尚未成功：`192.168.1.195` 可 ping，
-  但 SDK2 与官方 sample 均未收到 `InfoChange`，需先确认设备 IP/型号/工作模式；
+- 实机已验证：Livox Mid-360s（dev_type 35，SN `ARMCP7D0030195`），
+  `192.168.1.195`，100 Mb/s；3 帧点云、IMU、PCD/PPM 输出均正常；
 - 双回波 `0x11` 未实现，需要确认固件/SDK 版本与结构；
 - `host_ip` 变化需要重新创建运行时（进程内只初始化一次）；
 - 未做数据包 CRC 校验（SDK 已校验）；
-- 多雷达共用一份 host JSON；如需不同主机 IP/端口，需扩展运行时配置。
+- 多雷达共用一份 host JSON；如需不同主机 IP/端口，需扩展运行时配置；
+- Mid-360s 的 SDK JSON 键是大小写敏感的 `"Mid360s"`，自定义 JSON 必须包含；
+- 默认单播；组播需要自定义 JSON 中的 `multicast_ip` 并确保网桥转发。
 
 ## 12. 手动测试与点云查看
 
@@ -264,17 +277,35 @@ imv /tmp/livox_selftest.ppm
 - **Livox SDK sample**：`livox_lidar_quick_start <config.json>` 打印包统计，
   用于独立验证数据流。
 
-### 12.3 发现失败排查
+### 12.3 发现/取流失败排查
 
 `start()` 返回 `kTimeout` 时按顺序检查：
 
 1. `ip -brief link show <iface>`：carrier 为 1，速率 100 Mb/s；
 2. `ping <lidar-ip>`、`ip neigh`：确认 IP 与 MAC；
 3. `ip addr`：确认 `host_ip` 确实在本机；
-4. 尝试 `192.168.1.50`（Livox 文档常用主机地址），并关闭网桥多播侦听：
-   `echo 0 | sudo tee /sys/class/net/br-lidar/bridge/multicast_snooping`；
-5. 用 Livox Viewer 2 确认设备实际 IP、型号与工作模式；
-6. 直连网卡（不经网桥）排除中间设备。
+4. 用 tcpdump 看 56000 广播应答：
+   - 若应答的 `dev_type=35`，JSON 必须包含 **`"Mid360s"`**（大小写敏感）；
+   - 若应答的 `dev_type=9`，JSON 包含 `"MID360"`；
+   - 两者都写入即可兼容；
+5. 若日志出现 `Handle detection data` 但驱动仍 `kTimeout`：
+   - SDK 的 handle 是 `s_addr`，与 `inet_pton` 结果一致；
+   - 驱动会按 IP/serial 回退匹配，并覆盖为 SDK 的 handle；
+6. 若 `packets_received > 0` 但 `frames_received == 0`：
+   - Mid-360 非重复扫描的 `frame_cnt` 无效；
+   - 检查 `frame_duration_ms` 是否大于 0（默认 100 ms）；
+7. 组播配置下检查 `ip maddr`/`/proc/net/igmp` 与网桥
+   `multicast_snooping`；默认单播不需要这些；
+8. 直连网卡（不经网桥）排除中间设备。
 
-当前开发机记录：`192.168.1.195` 可 ping（DJI Baiwang MAC），但 SDK2 v1.3.1
-与官方 sample 均未收到 `InfoChange`；需先确认该设备是否为雷达以及是否处于正常模式。
+### 12.4 实测记录（2026-10-19）
+
+- 设备：**Livox Mid-360s**，`dev_type=35`，SN `ARMCP7D0030195`，
+  IP `192.168.1.195`；
+- 主机：`br-lidar` `192.168.1.51/24`，100 Mb/s；
+- 配置：生成 JSON 同时包含 `MID360` + `Mid360s`，默认单播，
+  `frame_duration_ms=100`；
+- 结果：2 帧 × 20064 点，`packets_dropped=0`；
+  `foray_livox_dump` 输出 PCD/PPM，俯视图可见场景轮廓；
+- IMU：`acc_z≈9.05 m/s²`（设备有倾斜），`gyro` 正常；
+- 关键修复：Mid-360s 配置键、`s_addr` handle、时间窗口切帧、g→m/s²。
