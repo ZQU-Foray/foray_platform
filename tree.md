@@ -64,6 +64,8 @@
 │   │   ├── packet_parser.cpp/.hpp  36 字节头与点/IMU 解析
 │   │   ├── frame_assembler.cpp/.hpp  组帧与逐点时间
 │   │   └── config_json.cpp/.hpp  Livox 网络 JSON
+│   ├── tools/
+│   │   └── livox_dump.cpp       点云导出（PCD/PPM）与自检
 │   └── test/livox/              mock 单测 + backend 能力测试
 └── .github/
     └── workflows/

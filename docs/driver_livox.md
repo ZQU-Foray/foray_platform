@@ -199,9 +199,82 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 
 ## 11. 已知限制
 
-- 真实 SDK 构建/链接已在开发机验证；实机读取未完成（验证时雷达链路断开，
-  HIL 不在本次范围，见 [驱动部署](driver_deployment.md)）；
+- 真实 SDK 构建/链接已在开发机验证；实机读取尚未成功：`192.168.1.195` 可 ping，
+  但 SDK2 与官方 sample 均未收到 `InfoChange`，需先确认设备 IP/型号/工作模式；
 - 双回波 `0x11` 未实现，需要确认固件/SDK 版本与结构；
 - `host_ip` 变化需要重新创建运行时（进程内只初始化一次）；
 - 未做数据包 CRC 校验（SDK 已校验）；
 - 多雷达共用一份 host JSON；如需不同主机 IP/端口，需扩展运行时配置。
+
+## 12. 手动测试与点云查看
+
+### 12.1 点云导出工具
+
+构建时打开（需要 SDK ON）：
+
+```bash
+cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
+  -DFORAY_BUILD_DRIVER_LIVOX=ON \
+  -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
+  -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2" \
+  -DFORAY_LIVOX_BUILD_TOOLS=ON
+cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
+```
+
+运行：
+
+```bash
+export LD_LIBRARY_PATH="$HOME/.cache/foray-platform-prefix/livox-sdk2/lib:$LD_LIBRARY_PATH"
+
+~/.cache/foray-platform-build/livox-on/foray_livox_dump \
+  --host-ip 192.168.1.51 \
+  --lidar-ip 192.168.1.195 \
+  --frames 3 \
+  --out /tmp/livox_cloud
+```
+
+输出：
+
+- `/tmp/livox_cloud.pcd`：`x y z intensity time line`，可用 CloudCompare、
+  MeshLab 或 Open3D 打开；
+- `/tmp/livox_cloud.ppm`：俯视 XY 投影（按高度着色），直接查看：
+
+```bash
+imv /tmp/livox_cloud.ppm
+# 或 xdg-open /tmp/livox_cloud.ppm
+```
+
+自检（不需要雷达，验证输出格式）：
+
+```bash
+~/.cache/foray-platform-build/livox-on/foray_livox_dump \
+  --self-test --out /tmp/livox_selftest
+imv /tmp/livox_selftest.ppm
+```
+
+### 12.2 官方工具（建议先做）
+
+- **Livox Viewer 2**：官方 GUI，直接看实时点云、设备 IP、工作模式；
+  如果它也发现不了设备，问题在硬件/网络，不在驱动；
+- **livox_ros_driver2 + RViz**：已有 ROS 2 时运行
+  `ros2 launch livox_ros_driver2 msg_MID360_launch.py`，在 RViz 添加
+  `PointCloud2`；
+- **Livox SDK sample**：`livox_lidar_quick_start <config.json>` 打印包统计，
+  用于独立验证数据流。
+
+### 12.3 发现失败排查
+
+`start()` 返回 `kTimeout` 时按顺序检查：
+
+1. `ip -brief link show <iface>`：carrier 为 1，速率 100 Mb/s；
+2. `ping <lidar-ip>`、`ip neigh`：确认 IP 与 MAC；
+3. `ip addr`：确认 `host_ip` 确实在本机；
+4. 尝试 `192.168.1.50`（Livox 文档常用主机地址），并关闭网桥多播侦听：
+   `echo 0 | sudo tee /sys/class/net/br-lidar/bridge/multicast_snooping`；
+5. 用 Livox Viewer 2 确认设备实际 IP、型号与工作模式；
+6. 直连网卡（不经网桥）排除中间设备。
+
+当前开发机记录：`192.168.1.195` 可 ping（DJI Baiwang MAC），但 SDK2 v1.3.1
+与官方 sample 均未收到 `InfoChange`；需先确认该设备是否为雷达以及是否处于正常模式。

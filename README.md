@@ -47,15 +47,19 @@ cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \
       -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
-      -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2"
+      -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2" \
+      -DFORAY_LIVOX_BUILD_TOOLS=ON
 ```
 
 - `FORAY_LIVOX_SDK_PROVIDER=SYSTEM`：从系统路径 / `CMAKE_PREFIX_PATH` 查找；
 - `PREBUILT`：只接受 `LIVOX_SDK2_ROOT` 前缀下的 SDK；
 - 安装后的 target 导出 `FORAY_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
-  `#if FORAY_DRIVER_LIVOX_HAS_SDK` 判断能力。
+  `#if FORAY_DRIVER_LIVOX_HAS_SDK` 判断能力；
+- `FORAY_LIVOX_BUILD_TOOLS=ON` 构建 `foray_livox_dump`，输出 PCD 与俯视 PPM，
+  用于手动查看点云。
 
-详见 [驱动部署](docs/driver_deployment.md)。
+详见 [驱动部署](docs/driver_deployment.md) 与
+[手动测试](docs/driver_livox.md#12-手动测试与点云查看)。
 
 ### 在 ROS 2 工作空间中构建
 
