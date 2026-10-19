@@ -22,7 +22,8 @@ namespace foray::platform::driver::livox::detail {
 class FrameAssembler {
   public:
     FrameAssembler(std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> pool,
-                   std::uint32_t point_capacity, std::uint8_t line_num, std::string_view frame_id);
+                   std::uint32_t point_capacity, std::uint8_t line_num, std::string_view frame_id,
+                   std::uint32_t frame_duration_ms = 100);
 
     FrameAssembler(const FrameAssembler&) = delete;
     FrameAssembler& operator=(const FrameAssembler&) = delete;
@@ -62,6 +63,7 @@ class FrameAssembler {
 
   private:
     bool begin_frame(const PacketHeader& header, std::uint64_t receive_steady_ns);
+    bool frame_expired(const PacketHeader& header, std::uint64_t receive_steady_ns) const noexcept;
     bool publish();
     void discard();
 
@@ -71,6 +73,8 @@ class FrameAssembler {
     std::size_t capacity_ = 0;
     std::uint8_t line_num_ = 1;
     std::string_view frame_id_;
+    /// @brief 时间组帧窗口；非重复扫描下 frame_cnt 无效时必须按时间切帧。
+    std::int64_t frame_duration_ns_ = 100'000'000;
 
     std::optional<hal::FramePool<hal::PointCloudFrame>::Writer> writer_;
     std::uint8_t current_frame_cnt_ = 0;

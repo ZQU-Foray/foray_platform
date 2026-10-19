@@ -191,11 +191,11 @@ void LivoxRuntime::on_packet(const PacketView& packet) noexcept {
 void LivoxRuntime::on_info(const InfoView& info) {
     CallbackSink* sink = find(info.handle);
     if (sink == nullptr) {
-        // 只配置了 serial 的实例在这里按序列号绑定 handle。
+        // InfoChange 的 handle 是 SDK 的 s_addr；与按 IP 预绑定的 handle 可能字节序不同，
+        // 因此这里按 serial / IP 再匹配一次，并覆盖为 SDK 的实际 handle。
         for (auto& slot : slots_) {
             CallbackSink* candidate = slot.load(std::memory_order_acquire);
-            if (candidate == nullptr || candidate->handle.load(std::memory_order_relaxed) != 0 ||
-                !candidate->active.load(std::memory_order_relaxed)) {
+            if (candidate == nullptr || !candidate->active.load(std::memory_order_relaxed)) {
                 continue;
             }
 

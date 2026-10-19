@@ -383,6 +383,13 @@ param::ParamSchema make_lidar_param_schema() {
     frame_count.hot_reloadable = false;
     add(schema, std::move(frame_count));
 
+    param::ParamSpec frame_duration =
+        make_spec("lidar.frame_duration_ms", param::ParamType::kInt, param::ParamValue(100));
+    frame_duration.minimum = param::ParamValue(10);
+    frame_duration.maximum = param::ParamValue(1000);
+    frame_duration.hot_reloadable = false;
+    add(schema, std::move(frame_duration));
+
     param::ParamSpec frame_timeout =
         make_spec("lidar.frame_timeout_ms", param::ParamType::kInt, param::ParamValue(200));
     frame_timeout.minimum = param::ParamValue(1);
@@ -551,6 +558,8 @@ Result<LidarConfig> bind_lidar_config(const param::ParamSnapshot& snapshot) {
         static_cast<std::uint32_t>(snapshot.get_int("lidar.point_buffer_capacity", 200000));
     config.frame_buffer_count =
         static_cast<std::uint32_t>(snapshot.get_int("lidar.frame_buffer_count", 3));
+    config.frame_duration_ms =
+        static_cast<std::uint32_t>(snapshot.get_int("lidar.frame_duration_ms", 100));
     config.frame_timeout_ms =
         static_cast<std::uint32_t>(snapshot.get_int("lidar.frame_timeout_ms", 200));
     config.frame_id = snapshot.get_string("lidar.frame_id", "lidar");
@@ -563,7 +572,7 @@ Result<LidarConfig> bind_lidar_config(const param::ParamSnapshot& snapshot) {
     }
     if (config.packet_ring_slots == 0 || config.max_packet_bytes < 36 ||
         config.point_buffer_capacity == 0 || config.frame_buffer_count == 0 ||
-        config.frame_timeout_ms == 0) {
+        config.frame_duration_ms == 0 || config.frame_timeout_ms == 0) {
         return invalid<LidarConfig>("lidar buffer/timeout values must be positive");
     }
 

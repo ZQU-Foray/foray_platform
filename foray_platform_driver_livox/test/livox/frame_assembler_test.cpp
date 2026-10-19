@@ -66,6 +66,28 @@ TEST(FrameAssemblerTest, PublishesOnFrameChange) {
     EXPECT_EQ(lease->points[3].line, 1);
 }
 
+TEST(FrameAssemblerTest, PublishesWhenFrameDurationExpires) {
+    auto pool = make_pool(3);
+    // 非重复扫描 frame_cnt 无效：用 10 ms 时间窗口切帧。
+    FrameAssembler assembler(pool, 256, 4, "lidar", 10);
+
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 100, 1'000'000, 2), 100));
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 101, 5'000'000, 2), 200));
+    EXPECT_TRUE(feed(assembler, frame_packet(0, 102, 11'000'000, 2), 300));
+
+    hal::FrameLease<hal::PointCloudFrame> first = pool->try_acquire_latest();
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->count, 4U);
+    EXPECT_EQ(first->sequence, 1U);
+    EXPECT_EQ(first->base_time.nanoseconds_since_epoch(), 1'000'000);
+
+    EXPECT_TRUE(assembler.flush());
+    hal::FrameLease<hal::PointCloudFrame> second = pool->try_acquire_latest();
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->count, 2U);
+    EXPECT_EQ(second->sequence, 2U);
+}
+
 TEST(FrameAssemblerTest, PublishesAfterIdleTimeout) {
     auto pool = make_pool(2);
     FrameAssembler assembler(pool, 256, 4, "lidar");

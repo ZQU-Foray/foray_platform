@@ -328,7 +328,13 @@ int main(int argc, char** argv) {
         hal::FrameLease<hal::PointCloudFrame> lease;
         Result<void> read = lidar->read(lease, timeout);
         if (!read.ok()) {
-            std::cerr << "读取第 " << frame_index << " 帧失败: " << read.error().message << '\n';
+            const hal::SensorStats stats = lidar->stats();
+            std::cerr << "读取第 " << frame_index << " 帧失败: " << read.error().message << '\n'
+                      << "stats: packets=" << stats.packets_received
+                      << " packets_dropped=" << stats.packets_dropped
+                      << " frames_received=" << stats.frames_received
+                      << " frames_dropped=" << stats.frames_dropped
+                      << " timeouts=" << stats.timeouts << '\n';
             lidar->close();
             return 5;
         }

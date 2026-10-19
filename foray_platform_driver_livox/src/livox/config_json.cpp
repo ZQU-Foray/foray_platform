@@ -87,27 +87,36 @@ bool is_local_ipv4(const std::string& ip) noexcept {
 std::string build_config_json(const std::string& host_ip) {
     std::ostringstream json;
     json << "{\n";
-    json << "  \"MID360\": {\n";
-    json << "    \"lidar_net_info\": {\n";
-    json << "      \"cmd_data_port\": " << kLidarCmdPort << ",\n";
-    json << "      \"push_msg_port\": " << kLidarPushMsgPort << ",\n";
-    json << "      \"point_data_port\": " << kLidarPointPort << ",\n";
-    json << "      \"imu_data_port\": " << kLidarImuPort << ",\n";
-    json << "      \"log_data_port\": " << kLidarLogPort << "\n";
-    json << "    },\n";
-    json << "    \"host_net_info\": [\n";
-    json << "      {\n";
-    json << "        \"host_ip\": \"" << host_ip << "\",\n";
-    json << "        \"multicast_ip\": \"224.1.1.5\",\n";
-    json << "        \"cmd_data_port\": " << kHostCmdPort << ",\n";
-    json << "        \"push_msg_port\": " << kHostPushMsgPort << ",\n";
-    json << "        \"point_data_port\": " << kHostPointPort << ",\n";
-    json << "        \"imu_data_port\": " << kHostImuPort << ",\n";
-    json << "        \"log_data_port\": " << kHostLogPort << "\n";
-    json << "      }\n";
-    json << "    ]\n";
-    json << "  }\n";
-    json << "}\n";
+
+    // SDK v1.3.1 用 "MID360" 表示 Mid-360（dev_type 9），
+    // 用大小写敏感的 "Mid360s" 表示 Mid-360s（dev_type 35）。
+    // 两个段都写入同一份网络配置：设备只匹配自己的类型，多余段会被忽略。
+    const auto append_section = [&json, &host_ip](const char* key) {
+        json << "  \"" << key << "\": {\n";
+        json << "    \"lidar_net_info\": {\n";
+        json << "      \"cmd_data_port\": " << kLidarCmdPort << ",\n";
+        json << "      \"push_msg_port\": " << kLidarPushMsgPort << ",\n";
+        json << "      \"point_data_port\": " << kLidarPointPort << ",\n";
+        json << "      \"imu_data_port\": " << kLidarImuPort << ",\n";
+        json << "      \"log_data_port\": " << kLidarLogPort << "\n";
+        json << "    },\n";
+        json << "    \"host_net_info\": [\n";
+        json << "      {\n";
+        json << "        \"host_ip\": \"" << host_ip << "\",\n";
+        json << "        \"cmd_data_port\": " << kHostCmdPort << ",\n";
+        json << "        \"push_msg_port\": " << kHostPushMsgPort << ",\n";
+        json << "        \"point_data_port\": " << kHostPointPort << ",\n";
+        json << "        \"imu_data_port\": " << kHostImuPort << ",\n";
+        json << "        \"log_data_port\": " << kHostLogPort << "\n";
+        json << "      }\n";
+        json << "    ]\n";
+        json << "  }";
+    };
+
+    append_section("MID360");
+    json << ",\n";
+    append_section("Mid360s");
+    json << "\n}\n";
     return json.str();
 }
 

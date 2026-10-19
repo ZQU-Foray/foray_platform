@@ -105,7 +105,11 @@ struct LidarConfig {
     std::uint32_t point_buffer_capacity = 200000;
     /// @brief HAL 点云帧槽数。
     std::uint32_t frame_buffer_count = 3;
-    /// @brief 组帧空闲超时。
+    /// @brief 非重复扫描的时间组帧窗口；10 Hz 点云建议 100 ms。
+    ///
+    /// Mid-360 系列在非重复扫描下 `frame_cnt` 无效，必须按时间切帧。
+    std::uint32_t frame_duration_ms = 100;
+    /// @brief 组帧空闲超时（数据中断时强制发布当前帧）。
     std::uint32_t frame_timeout_ms = 200;
 
     std::string frame_id = "lidar";

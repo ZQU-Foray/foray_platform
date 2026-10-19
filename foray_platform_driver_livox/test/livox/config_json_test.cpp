@@ -31,6 +31,8 @@ TEST(ConfigJsonTest, ValidatesIpv4) {
 TEST(ConfigJsonTest, BuildsPortsAndHostIp) {
     const std::string json = build_config_json("192.168.1.51");
     EXPECT_NE(json.find("\"MID360\""), std::string::npos);
+    // Mid-360s 的 SDK 配置键是大小写敏感的 "Mid360s"。
+    EXPECT_NE(json.find("\"Mid360s\""), std::string::npos);
     EXPECT_NE(json.find("\"host_ip\": \"192.168.1.51\""), std::string::npos);
     EXPECT_NE(json.find("\"point_data_port\": 56300"), std::string::npos);
     EXPECT_NE(json.find("\"point_data_port\": 56301"), std::string::npos);

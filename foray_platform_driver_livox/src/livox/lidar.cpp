@@ -20,6 +20,8 @@ constexpr std::int64_t kConfigRetryMs = 100;
 constexpr std::int64_t kPollMicroseconds = 200;
 // IMU 队列容量：200 Hz 下约 5 秒缓冲。
 constexpr std::size_t kImuQueueSlots = 1024;
+// 标准重力加速度（ISO 80000-3）；Livox IMU 加速度单位为 g，HAL 统一为 m/s^2。
+constexpr float kStandardGravity = 9.80665F;
 
 // SDK 工作模式（LivoxLidarWorkMode）。
 constexpr std::uint8_t kWorkModeNormal = 0x01;
@@ -216,6 +218,9 @@ Result<void> LidarImpl::open_locked() {
     }
     if (config_.frame_buffer_count == 0) {
         return fail(make_error(ErrorCode::kInvalidArgument, "frame_buffer_count 必须大于 0"));
+    }
+    if (config_.frame_duration_ms == 0) {
+        return fail(make_error(ErrorCode::kInvalidArgument, "frame_duration_ms 必须大于 0"));
     }
     if (config_.frame_timeout_ms == 0) {
         return fail(make_error(ErrorCode::kInvalidArgument, "frame_timeout_ms 必须大于 0"));
@@ -451,7 +456,8 @@ void LidarImpl::update_sensor_info_locked() {
 }
 
 void LidarImpl::parse_loop() {
-    FrameAssembler assembler(pool_, config_.point_buffer_capacity, line_num_, config_.frame_id);
+    FrameAssembler assembler(pool_, config_.point_buffer_capacity, line_num_, config_.frame_id,
+                             config_.frame_duration_ms);
     const std::int64_t timeout_ns = static_cast<std::int64_t>(config_.frame_timeout_ms) * 1'000'000;
 
     PacketSlot slot;
@@ -502,6 +508,11 @@ void LidarImpl::handle_packet(const PacketSlot& slot, FrameAssembler& assembler)
             }
             return;
         }
+
+        // Livox 协议中加速度单位是 g；HAL 的 ImuSample 约定为 m/s^2。
+        sample.acc_x *= kStandardGravity;
+        sample.acc_y *= kStandardGravity;
+        sample.acc_z *= kStandardGravity;
 
         sample.receive_stamp =
             time::Timestamp::from_nanoseconds(static_cast<std::int64_t>(slot.receive_steady_ns));

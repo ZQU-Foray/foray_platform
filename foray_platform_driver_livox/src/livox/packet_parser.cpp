@@ -1,5 +1,7 @@
 #include "livox/packet_parser.hpp"
 
+#include <arpa/inet.h>
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -317,25 +319,25 @@ const char* model_name(std::uint8_t dev_type) noexcept {
 }
 
 std::uint32_t ipv4_to_handle(const std::string& ip) noexcept {
-    unsigned a = 0;
-    unsigned b = 0;
-    unsigned c = 0;
-    unsigned d = 0;
-    const int parsed = std::sscanf(ip.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d);
-    if (parsed != 4 || a > 255 || b > 255 || c > 255 || d > 255) {
+    // SDK 的 handle 就是 sockaddr_in::sin_addr.s_addr 的原始数值；
+    // 在小端机上它看起来是字节反序的，不能用 (a<<24)|... 手工拼接。
+    struct in_addr address{};
+    if (inet_pton(AF_INET, ip.c_str(), &address) != 1) {
         return 0;
     }
-    return (static_cast<std::uint32_t>(a) << 24) | (static_cast<std::uint32_t>(b) << 16) |
-           (static_cast<std::uint32_t>(c) << 8) | static_cast<std::uint32_t>(d);
+    return address.s_addr;
 }
 
 std::string handle_to_ipv4(std::uint32_t handle) {
     if (handle == 0) {
         return {};
     }
-    char buffer[16] = {};
-    std::snprintf(buffer, sizeof(buffer), "%u.%u.%u.%u", (handle >> 24) & 0xFFU,
-                  (handle >> 16) & 0xFFU, (handle >> 8) & 0xFFU, handle & 0xFFU);
+    struct in_addr address{};
+    address.s_addr = handle;
+    char buffer[INET_ADDRSTRLEN] = {};
+    if (inet_ntop(AF_INET, &address, buffer, sizeof(buffer)) == nullptr) {
+        return {};
+    }
     return std::string(buffer);
 }
 

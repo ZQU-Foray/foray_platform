@@ -73,7 +73,8 @@ const char* model_name(std::uint8_t dev_type) noexcept;
 /**
  * @brief IPv4 点分字符串 → Livox handle。
  *
- * Livox 的 handle 按网络字节序打包：`a.b.c.d` → `(a << 24) | (b << 16) | (c << 8) | d`。
+ * Livox 的 handle 是 `sockaddr_in::sin_addr.s_addr` 的原始数值，
+ * 在小端机上表现为字节反序；不要手工用 `(a << 24) | ...` 拼接。
  */
 std::uint32_t ipv4_to_handle(const std::string& ip) noexcept;
 

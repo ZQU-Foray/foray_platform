@@ -6,8 +6,9 @@ namespace foray::platform::driver::livox::detail {
 
 FrameAssembler::FrameAssembler(std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> pool,
                                std::uint32_t point_capacity, std::uint8_t line_num,
-                               std::string_view frame_id)
-    : pool_(std::move(pool)), capacity_(point_capacity), line_num_(line_num), frame_id_(frame_id) {
+                               std::string_view frame_id, std::uint32_t frame_duration_ms)
+    : pool_(std::move(pool)), capacity_(point_capacity), line_num_(line_num), frame_id_(frame_id),
+      frame_duration_ns_(static_cast<std::int64_t>(frame_duration_ms) * 1'000'000) {
 }
 
 bool FrameAssembler::on_packet(const PacketHeader& header, const std::uint8_t* packet,
@@ -15,7 +16,11 @@ bool FrameAssembler::on_packet(const PacketHeader& header, const std::uint8_t* p
     last_packet_steady_ns_ = receive_steady_ns;
 
     bool published = false;
-    if (!writer_.has_value() || header.frame_cnt != current_frame_cnt_) {
+    const bool frame_boundary = writer_.has_value() && (header.frame_cnt != current_frame_cnt_ ||
+                                                        (header.udp_cnt == 0 && count_ > 0) ||
+                                                        frame_expired(header, receive_steady_ns));
+
+    if (!writer_.has_value() || frame_boundary) {
         if (writer_.has_value()) {
             published = publish();
         }
@@ -72,6 +77,19 @@ bool FrameAssembler::flush() {
         return false;
     }
     return publish();
+}
+
+bool FrameAssembler::frame_expired(const PacketHeader& header,
+                                   std::uint64_t receive_steady_ns) const noexcept {
+    if (!writer_.has_value() || count_ == 0 || frame_duration_ns_ <= 0) {
+        return false;
+    }
+
+    const std::uint64_t duration_ns = static_cast<std::uint64_t>(frame_duration_ns_);
+    if (header.timestamp_ns > 0 && base_device_ns_ > 0) {
+        return header.timestamp_ns >= static_cast<std::uint64_t>(base_device_ns_) + duration_ns;
+    }
+    return receive_steady_ns >= base_receive_steady_ns_ + duration_ns;
 }
 
 bool FrameAssembler::begin_frame(const PacketHeader& header, std::uint64_t receive_steady_ns) {
