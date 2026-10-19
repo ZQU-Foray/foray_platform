@@ -11,6 +11,7 @@ include(CMakePackageConfigHelpers)
 
 option(FORAY_BUILD_DRIVER_LIVOX "Build the driver against Livox SDK2" OFF)
 option(FORAY_PLATFORM_BUILD_TESTS "Build driver unit tests" ON)
+option(FORAY_LIVOX_BUILD_TOOLS "Build Livox diagnostic tools (requires driver SDK ON)" OFF)
 
 if(FORAY_BUILD_DRIVER_LIVOX)
     set(FORAY_DRIVER_LIVOX_HAS_SDK_VALUE 1)
@@ -180,6 +181,21 @@ if(FORAY_PLATFORM_BUILD_TESTS)
     include(GoogleTest)
     gtest_discover_tests(foray_platform_driver_livox_tests)
     gtest_discover_tests(foray_platform_driver_livox_backend_tests)
+endif()
+
+if(FORAY_LIVOX_BUILD_TOOLS)
+    if(NOT FORAY_BUILD_DRIVER_LIVOX)
+        message(FATAL_ERROR
+            "FORAY_LIVOX_BUILD_TOOLS=ON 需要同时设置 "
+            "FORAY_BUILD_DRIVER_LIVOX=ON")
+    endif()
+
+    add_executable(foray_livox_dump tools/livox_dump.cpp)
+    target_link_libraries(foray_livox_dump PRIVATE foray_platform_driver_livox)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(foray_livox_dump PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    install(TARGETS foray_livox_dump RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
 set(FORAY_DRIVER_LIVOX_NEEDS_SDK_AT_LINK 0)
