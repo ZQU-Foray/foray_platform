@@ -229,7 +229,7 @@ TEST(SetupTest, ReplacesStaleAddressInSameSubnet) {
     EXPECT_EQ(planned.value()[0].address->to_string(), "192.168.1.99");
     EXPECT_EQ(planned.value()[1].operation, "add_ipv4");
 
-    foray::platform::test::FakeBackend backend;
+    foray::platform::net::FakeBackend backend;
     const auto report = foray::platform::net::ensure_link(intent, topology, backend, false);
     ASSERT_TRUE(report.ok()) << report.error().message;
     ASSERT_EQ(backend.calls.size(), 2U);
