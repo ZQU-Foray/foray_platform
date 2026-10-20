@@ -38,6 +38,14 @@ struct InfoView {
     const char* ip_address = nullptr;
 };
 
+/// @brief 从雷达读回的关键配置；用于写后校验。
+struct LidarInternalInfo {
+    /// @brief `kKeyLidarIpCfg(0x0004)` 解析出的 IP；未下发过配置时为空。
+    std::string ip_address;
+    /// @brief 回包里的参数条目数；0 表示没有解析到有效内容。
+    std::uint16_t param_count = 0;
+};
+
 using PacketCallback = void (*)(void* user, const PacketView& packet);
 using InfoCallback = void (*)(void* user, const InfoView& info);
 
@@ -69,6 +77,30 @@ class LivoxApi {
     virtual Result<void> set_scan_pattern(std::uint32_t handle, std::uint8_t pattern) = 0;
     virtual Result<void> set_dual_emit(std::uint32_t handle, bool enable) = 0;
     virtual Result<void> request_reset(std::uint32_t handle) = 0;
+
+    /// @brief 下发雷达 IP（`kKeyLidarIpCfg`）；地址为点分十进制字符串。
+    virtual Result<void> set_lidar_ip(std::uint32_t handle, const std::string& ip,
+                                      const std::string& net_mask,
+                                      const std::string& gateway) = 0;
+
+    /// @brief 下发安装姿态（角度 + 毫米级安装偏移）。
+    virtual Result<void> set_install_attitude(std::uint32_t handle, float roll_deg,
+                                              float pitch_deg, float yaw_deg, std::int32_t x_mm,
+                                              std::int32_t y_mm, std::int32_t z_mm) = 0;
+
+    /// @brief 下发 PPS 同步模式；Mid-360s 不支持该指令（SDK 返回 kNotSupported）。
+    virtual Result<void> set_pps_sync_mode(std::uint32_t handle, std::uint8_t mode) = 0;
+
+    /// @brief 下发点云/IMU 的目标主机地址与端口。
+    virtual Result<void> set_host_port_cfg(std::uint32_t handle, const std::string& host_ip,
+                                           std::uint16_t host_port,
+                                           std::uint16_t lidar_port) = 0;
+
+    /// @brief 下发 RMC/GPRMC 授时语句。
+    virtual Result<void> set_rmc_sync_time(std::uint32_t handle, const std::string& rmc) = 0;
+
+    /// @brief 读回关键配置（IP、参数条目数），用于写后校验。
+    virtual Result<LidarInternalInfo> query_internal_info(std::uint32_t handle) = 0;
 };
 
 /**

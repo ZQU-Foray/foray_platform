@@ -96,6 +96,63 @@ class MockLivoxApi final : public detail::LivoxApi {
         return Result<void>();
     }
 
+    Result<void> set_lidar_ip(std::uint32_t handle, const std::string& ip,
+                              const std::string& net_mask, const std::string& gateway) override {
+        last_handle = handle;
+        lidar_ip = ip;
+        lidar_net_mask = net_mask;
+        lidar_gateway = gateway;
+        ++control_calls;
+        return injected_failure();
+    }
+
+    Result<void> set_install_attitude(std::uint32_t handle, float roll_deg, float pitch_deg,
+                                      float yaw_deg, std::int32_t x_mm, std::int32_t y_mm,
+                                      std::int32_t z_mm) override {
+        last_handle = handle;
+        attitude = {roll_deg, pitch_deg, yaw_deg, static_cast<float>(x_mm),
+                    static_cast<float>(y_mm), static_cast<float>(z_mm)};
+        ++control_calls;
+        return injected_failure();
+    }
+
+    Result<void> set_pps_sync_mode(std::uint32_t handle, std::uint8_t mode) override {
+        last_handle = handle;
+        pps_mode = mode;
+        ++control_calls;
+        return injected_failure();
+    }
+
+    Result<void> set_host_port_cfg(std::uint32_t handle, const std::string& host_ip,
+                                   std::uint16_t host_port, std::uint16_t lidar_port) override {
+        last_handle = handle;
+        host_ip_cfg = host_ip;
+        host_port_cfg = host_port;
+        lidar_port_cfg = lidar_port;
+        ++control_calls;
+        return injected_failure();
+    }
+
+    Result<void> set_rmc_sync_time(std::uint32_t handle, const std::string& rmc) override {
+        last_handle = handle;
+        rmc_sync = rmc;
+        ++control_calls;
+        return injected_failure();
+    }
+
+    Result<detail::LidarInternalInfo> query_internal_info(std::uint32_t handle) override {
+        last_handle = handle;
+        ++query_calls;
+        if (query_failures > 0) {
+            --query_failures;
+            return make_error(ErrorCode::kTimeout, "注入读回超时");
+        }
+        detail::LidarInternalInfo info;
+        info.ip_address = reported_ip;
+        info.param_count = reported_ip.empty() ? 0 : 1;
+        return info;
+    }
+
     void emit_info(std::uint32_t handle, std::uint8_t dev_type, const std::string& serial,
                    const std::string& ip_address) {
         if (!begin_callback()) {
@@ -153,6 +210,20 @@ class MockLivoxApi final : public detail::LivoxApi {
     std::uint8_t scan_pattern = 0;
     bool dual_emit = false;
 
+    std::string lidar_ip;
+    std::string lidar_net_mask;
+    std::string lidar_gateway;
+    std::string host_ip_cfg;
+    std::uint16_t host_port_cfg = 0;
+    std::uint16_t lidar_port_cfg = 0;
+    std::string rmc_sync;
+    std::uint8_t pps_mode = 0;
+    std::array<float, 6> attitude{};  // roll, pitch, yaw, x, y, z
+    std::string reported_ip;          // 读回时假装雷达回报的 IP
+    int query_calls = 0;
+    int query_failures = 0;           // 读回失败注入次数
+    int control_failures = 0;         // 控制下发失败注入次数
+
     std::atomic<detail::PacketCallback> point_callback{nullptr};
     std::atomic<void*> point_user{nullptr};
     std::atomic<detail::PacketCallback> imu_callback{nullptr};
@@ -161,6 +232,14 @@ class MockLivoxApi final : public detail::LivoxApi {
     std::atomic<void*> info_user{nullptr};
 
   private:
+    Result<void> injected_failure() {
+        if (control_failures > 0) {
+            --control_failures;
+            return make_error(ErrorCode::kTimeout, "注入控制超时");
+        }
+        return Result<void>();
+    }
+
     bool begin_callback() {
         if (!accepting.load(std::memory_order_acquire)) {
             return false;

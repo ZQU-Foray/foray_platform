@@ -1,7 +1,11 @@
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <unistd.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -13,9 +17,13 @@
 #include "foray/platform/driver/livox/lidar.hpp"
 #include "foray/platform/hal/frame.hpp"
 #include "foray/platform/hal/sensor_stats.hpp"
+#include "foray/platform/time/clock.hpp"
 #include "foray/platform/time/duration.hpp"
 
 namespace {
+
+namespace hal = foray::platform::hal;
+namespace time = foray::platform::time;
 
 // 俯视图输出分辨率；不需要外部图像库，直接写 PPM。
 constexpr int kImageSize = 800;
@@ -23,6 +31,19 @@ constexpr int kImageSize = 800;
 constexpr double kMaxPlotRangeMeters = 50.0;
 // 每个点绘制的像素块半径（0 表示 1×1）。
 constexpr int kPointPixelRadius = 1;
+// 流式模式下单点文本行的临时缓冲；足够容纳全部 7 列（含 9 位小数时间）。
+constexpr std::size_t kStreamLineCapacity = 160;
+
+// 流式输出的表头与列序：下游可跳过 '#' 开头的行。
+constexpr const char* kStreamHeader =
+    "# foray_livox_dump stream v1 fields=frame x y z intensity time_s line\n";
+
+// SIGINT / SIGTERM 只置标志，由主循环决定何时收尾（不在信号处理里做 I/O）。
+volatile std::sig_atomic_t g_stop_requested = 0;
+
+extern "C" void handle_stop_signal(int /*signal_number*/) {
+    g_stop_requested = 1;
+}
 
 struct Options {
     std::string host_ip;
@@ -34,7 +55,100 @@ struct Options {
     int timeout_ms = 15000;
     bool help = false;
     bool self_test = false;
+    bool stream = false;
 };
+
+/// @brief 流式输出的累计统计（只用于收尾汇报）。
+struct StreamSummary {
+    std::uint64_t frames = 0;
+    std::uint64_t points = 0;
+    std::uint64_t bytes = 0;
+    time::Timestamp start_steady;
+    time::Timestamp last_frame_steady;
+};
+
+/// 流式模式下 stdout 会被 SDK 日志占用，点云数据改走这个保存的 fd。
+int g_stream_fd = -1;
+
+/// @brief 全量写；EINTR 重试，部分写继续。失败返回 false 并把 errno 写进 error。
+bool write_all(const char* data, std::size_t size, int& error) {
+    std::size_t offset = 0;
+    while (offset < size) {
+        const ssize_t written = ::write(g_stream_fd, data + offset, size - offset);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            error = errno;
+            return false;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    return true;
+}
+
+/// @brief 一帧流式写入的结果；`ok == false` 时 `error` 为 errno。
+struct StreamWriteResult {
+    std::size_t bytes = 0;
+    bool ok = false;
+    int error = 0;
+};
+
+/// @brief 把一帧点云写入 stdout；失败时保留 errno（区分 EPIPE 与真写失败）。
+StreamWriteResult stream_frame(std::uint64_t frame_index, const hal::PointCloudFrame& frame,
+                               std::string& buffer) {
+    StreamWriteResult result;
+    buffer.clear();
+    buffer.reserve(frame.count * kStreamLineCapacity);
+
+    char line[kStreamLineCapacity];
+    for (std::size_t index = 0; index < frame.count; ++index) {
+        const hal::PointXYZITL& point = frame.points[index];
+        const int length = std::snprintf(
+            line, sizeof(line), "%llu %.4f %.4f %.4f %.1f %.9f %u\n",
+            static_cast<unsigned long long>(frame_index), static_cast<double>(point.x),
+            static_cast<double>(point.y), static_cast<double>(point.z),
+            static_cast<double>(point.intensity),
+            static_cast<double>(point.time_offset_ns) / 1'000'000'000.0,
+            static_cast<unsigned>(point.line));
+        if (length <= 0) {
+            continue;
+        }
+        buffer.append(line, static_cast<std::size_t>(length));
+    }
+
+    if (!write_all(buffer.data(), buffer.size(), result.error)) {
+        return result;
+    }
+    result.bytes = buffer.size();
+    result.ok = true;
+    return result;
+}
+
+const char* errno_text(int error) {
+    return std::strerror(error == 0 ? EIO : error);
+}
+
+void report_stream_frame(std::uint64_t frame_index, const hal::PointCloudFrame& frame,
+                         std::uint64_t frame_bytes, double interval_ms, double fps) {
+    std::fprintf(stderr,
+                 "[frame %llu] seq=%llu points=%zu dropped_packets=%u sync=%s "
+                 "frame_bytes=%llu interval_ms=%.1f fps=%.1f\n",
+                 static_cast<unsigned long long>(frame_index),
+                 static_cast<unsigned long long>(frame.sequence), frame.count,
+                 static_cast<unsigned>(frame.dropped_packets),
+                 hal::to_string(frame.sync),
+                 static_cast<unsigned long long>(frame_bytes), interval_ms, fps);
+    std::fflush(stderr);
+}
+
+int write_stream_header() {
+    int error = 0;
+    if (!write_all(kStreamHeader, std::strlen(kStreamHeader), error)) {
+        return error;
+    }
+    return 0;
+}
 
 void print_usage() {
     std::cout << "用法: foray_livox_dump --host-ip <ip> --lidar-ip <ip> [选项]\n"
@@ -42,13 +156,19 @@ void print_usage() {
               << "读取 Livox 点云并写出 .pcd（完整 3D）与 .ppm（俯视图）。\n"
               << "\n"
               << "选项:\n"
-              << "  --frames N          读取帧数（默认 1）\n"
+              << "  --frames N          读取帧数（默认 1；与 --stream 同用时 0 表示持续输出）\n"
               << "  --timeout-ms N      每帧读取超时（默认 15000）\n"
               << "  --out PREFIX        输出前缀（默认 livox_cloud）\n"
+              << "  --stream            点云逐点流式写入 stdout（每帧刷新；不写 PCD/PPM）\n"
               << "  --config-json PATH  自定义 Livox SDK2 JSON\n"
               << "  --runtime-dir DIR   自动生成 JSON 的目录\n"
               << "  --self-test         生成合成点云，验证输出文件（不需要雷达）\n"
-              << "  --help              显示本帮助\n";
+              << "  --help              显示本帮助\n"
+              << "\n"
+              << "流式格式（stdout，文本按行）:\n"
+              << "  # foray_livox_dump stream v1 fields=frame x y z intensity time_s line\n"
+              << "  <frame> <x> <y> <z> <intensity> <time_s> <line>\n"
+              << "  每帧统计写 stderr，因此可直接管道给下游程序。\n";
 }
 
 bool parse_int(const std::string& text, int& value) {
@@ -81,6 +201,8 @@ bool parse_options(int argc, char** argv, Options& options, std::string& error) 
             options.help = true;
         } else if (argument == "--self-test") {
             options.self_test = true;
+        } else if (argument == "--stream") {
+            options.stream = true;
         } else if (argument == "--host-ip") {
             if (!next(options.host_ip)) {
                 return false;
@@ -103,8 +225,8 @@ bool parse_options(int argc, char** argv, Options& options, std::string& error) 
             }
         } else if (argument == "--frames") {
             std::string value;
-            if (!next(value) || !parse_int(value, options.frames) || options.frames <= 0) {
-                error = "--frames 必须是正整数";
+            if (!next(value) || !parse_int(value, options.frames) || options.frames < 0) {
+                error = "--frames 必须是非负整数（0 仅在 --stream 下表示持续输出）";
                 return false;
             }
         } else if (argument == "--timeout-ms") {
@@ -120,6 +242,10 @@ bool parse_options(int argc, char** argv, Options& options, std::string& error) 
     }
 
     if (!options.help && !options.self_test) {
+        if (options.frames == 0 && !options.stream) {
+            error = "--frames 0 只在 --stream 模式下有效";
+            return false;
+        }
         if (options.lidar_ip.empty()) {
             error = "必须提供 --lidar-ip";
             return false;
@@ -265,8 +391,35 @@ int main(int argc, char** argv) {
 
     using namespace foray::platform;
 
+    // 信号只置停止标志；写剩余文件与汇总在主循环外完成（信号处理里不做 I/O）。
+    std::signal(SIGINT, handle_stop_signal);
+    std::signal(SIGTERM, handle_stop_signal);
+#ifdef SIGPIPE
+    // 下游管道提前关闭时不要被 SIGPIPE 杀掉，改为检测写失败后优雅退出。
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
+
+    if (options.stream) {
+        // SDK 的 console 日志写 stdout，和点云流会混在一起；保存真实 stdout，
+        // 把 fd 1 指向 /dev/null，点云改走 g_stream_fd。
+        const int saved = ::dup(STDOUT_FILENO);
+        if (saved < 0) {
+            std::cerr << "保存 stdout 失败: " << errno_text(errno) << '\n';
+            return 7;
+        }
+        g_stream_fd = saved;
+        if (std::freopen("/dev/null", "w", stdout) == nullptr) {
+            std::cerr << "重定向 stdout 失败: " << errno_text(errno) << '\n';
+            return 7;
+        }
+    }
+
+    const time::SteadyClock steady_clock;
+    std::vector<hal::PointXYZITL> points;
+    std::string stream_buffer;
+    StreamSummary summary;
+
     if (options.self_test) {
-        std::vector<hal::PointXYZITL> points;
         constexpr int kSyntheticPoints = 20000;
         points.reserve(kSyntheticPoints);
         for (int index = 0; index < kSyntheticPoints; ++index) {
@@ -280,6 +433,35 @@ int main(int argc, char** argv) {
             point.time_offset_ns = index * 1000;
             point.line = static_cast<std::uint8_t>(index % 4);
             points.push_back(point);
+        }
+
+        if (options.stream) {
+            const int header_error = write_stream_header();
+            if (header_error != 0) {
+                if (header_error == EPIPE) {
+                    std::cerr << "stdout 已关闭（下游提前结束），已停止流式输出\n";
+                    return 0;
+                }
+                std::cerr << "流式写出表头失败: " << errno_text(header_error) << '\n';
+                return 7;
+            }
+            hal::PointCloudFrame frame;
+            frame.points = points.data();
+            frame.count = points.size();
+            frame.sync = hal::TimestampSync::kNoSync;
+            const StreamWriteResult stream_result = stream_frame(0, frame, stream_buffer);
+            if (!stream_result.ok) {
+                // 下游只读一行就退出（如 `| head -1`）不算错误。
+                if (stream_result.error == EPIPE) {
+                    std::cerr << "stdout 已关闭（下游提前结束），已停止流式输出\n";
+                    return 0;
+                }
+                std::cerr << "流式写出合成点云失败: " << errno_text(stream_result.error) << '\n';
+                return 7;
+            }
+            std::cerr << "self-test(stream): " << points.size() << " 点, " << stream_result.bytes
+                      << " 字节 -> stdout\n";
+            return 0;
         }
 
         const std::string pcd_path = options.output_prefix + ".pcd";
@@ -322,12 +504,36 @@ int main(int argc, char** argv) {
         return 4;
     }
 
-    std::vector<hal::PointXYZITL> points;
     const time::Duration timeout = time::Duration::from_milliseconds(options.timeout_ms);
-    for (int frame_index = 0; frame_index < options.frames; ++frame_index) {
+    // --stream --frames 0：持续输出，直到 Ctrl-C / SIGTERM。
+    const bool unbounded = options.stream && options.frames == 0;
+    const std::uint64_t frame_limit = static_cast<std::uint64_t>(options.frames);
+    std::uint64_t frame_index = 0;
+    int stdout_error = 0;
+
+    if (options.stream) {
+        summary.start_steady = steady_clock.now();
+        stdout_error = write_stream_header();
+        if (stdout_error != 0) {
+            // 表头都写不出去，后面每帧也写不出去；按同一套收尾逻辑处理。
+            if (stdout_error == EPIPE) {
+                std::cerr << "stdout 已关闭（下游提前结束），已停止流式输出\n";
+                lidar->close();
+                return 0;
+            }
+            std::cerr << "流式写出表头失败: " << errno_text(stdout_error) << '\n';
+            lidar->close();
+            return 7;
+        }
+    }
+
+    while (!g_stop_requested && (unbounded || frame_index < frame_limit)) {
         hal::FrameLease<hal::PointCloudFrame> lease;
         Result<void> read = lidar->read(lease, timeout);
         if (!read.ok()) {
+            if (g_stop_requested) {
+                break;
+            }
             const hal::SensorStats stats = lidar->stats();
             std::cerr << "读取第 " << frame_index << " 帧失败: " << read.error().message << '\n'
                       << "stats: packets=" << stats.packets_received
@@ -339,16 +545,75 @@ int main(int argc, char** argv) {
             return 5;
         }
 
-        std::cout << "frame " << frame_index << ": seq=" << lease->sequence
-                  << " points=" << lease->count << " sync=" << hal::to_string(lease->sync)
-                  << " base_time_ns=" << lease->base_time.nanoseconds_since_epoch() << '\n';
-        if (lease->count > 0) {
-            points.insert(points.end(), lease->points, lease->points + lease->count);
+        const time::Timestamp frame_steady = steady_clock.now();
+        const double interval_ms =
+            summary.frames == 0
+                ? 0.0
+                : static_cast<double>((frame_steady - summary.last_frame_steady).nanoseconds()) /
+                      1'000'000.0;
+        summary.frames += 1;
+        summary.points += lease->count;
+        summary.last_frame_steady = frame_steady;
+
+        if (options.stream) {
+            const StreamWriteResult write = stream_frame(frame_index, *lease, stream_buffer);
+            if (!write.ok) {
+                stdout_error = write.error;
+                break;
+            }
+            summary.bytes += write.bytes;
+            const double elapsed_s =
+                static_cast<double>((frame_steady - summary.start_steady).nanoseconds()) /
+                1'000'000'000.0;
+            const double fps =
+                elapsed_s > 0.0 ? static_cast<double>(summary.frames) / elapsed_s : 0.0;
+            report_stream_frame(frame_index, *lease, write.bytes, interval_ms, fps);
+        } else {
+            std::cout << "frame " << frame_index << ": seq=" << lease->sequence
+                      << " points=" << lease->count << " sync=" << hal::to_string(lease->sync)
+                      << " base_time_ns=" << lease->base_time.nanoseconds_since_epoch() << '\n';
+            if (lease->count > 0) {
+                points.insert(points.end(), lease->points, lease->points + lease->count);
+            }
         }
+        ++frame_index;
     }
 
     const hal::SensorStats stats = lidar->stats();
     lidar->close();
+
+    if (options.stream) {
+        const time::Timestamp now = steady_clock.now();
+        const double elapsed_s =
+            static_cast<double>((now - summary.start_steady).nanoseconds()) / 1'000'000'000.0;
+        const double fps =
+            elapsed_s > 0.0 ? static_cast<double>(summary.frames) / elapsed_s : 0.0;
+        const double bytes_per_second =
+            elapsed_s > 0.0 ? static_cast<double>(summary.bytes) / elapsed_s : 0.0;
+
+        std::cerr << "stream 汇总: frames=" << summary.frames << " points=" << summary.points
+                  << " bytes=" << summary.bytes << " elapsed_s=" << std::fixed
+                  << std::setprecision(3) << elapsed_s << " avg_fps=" << std::setprecision(2) << fps
+                  << " throughput_MBps=" << std::setprecision(2)
+                  << bytes_per_second / 1'000'000.0 << std::defaultfloat << '\n'
+                  << "stats: packets=" << stats.packets_received
+                  << " packets_dropped=" << stats.packets_dropped
+                  << " frames_received=" << stats.frames_received
+                  << " frames_dropped=" << stats.frames_dropped
+                  << " timeouts=" << stats.timeouts << '\n';
+        if (stdout_error == EPIPE) {
+            std::cerr << "stdout 已关闭（下游提前结束），已停止流式输出\n";
+        } else if (stdout_error != 0) {
+            // 真写失败优先于「没读到点」的判定，避免掩盖磁盘满类问题。
+            std::cerr << "stdout 写入失败: " << errno_text(stdout_error) << '\n';
+            return 7;
+        }
+        if (summary.points == 0) {
+            std::cerr << "没有读到任何点\n";
+            return 6;
+        }
+        return 0;
+    }
 
     if (points.empty()) {
         std::cerr << "没有读到任何点\n";

@@ -49,6 +49,33 @@ class StubLivoxApi final : public LivoxApi {
     Result<void> request_reset(std::uint32_t) override {
         return sdk_unavailable();
     }
+
+    Result<void> set_lidar_ip(std::uint32_t, const std::string&, const std::string&,
+                              const std::string&) override {
+        return sdk_unavailable();
+    }
+
+    Result<void> set_install_attitude(std::uint32_t, float, float, float, std::int32_t,
+                                      std::int32_t, std::int32_t) override {
+        return sdk_unavailable();
+    }
+
+    Result<void> set_pps_sync_mode(std::uint32_t, std::uint8_t) override {
+        return sdk_unavailable();
+    }
+
+    Result<void> set_host_port_cfg(std::uint32_t, const std::string&, std::uint16_t,
+                                   std::uint16_t) override {
+        return sdk_unavailable();
+    }
+
+    Result<void> set_rmc_sync_time(std::uint32_t, const std::string&) override {
+        return sdk_unavailable();
+    }
+
+    Result<LidarInternalInfo> query_internal_info(std::uint32_t) override {
+        return Result<LidarInternalInfo>(sdk_unavailable());
+    }
 };
 
 } // namespace
