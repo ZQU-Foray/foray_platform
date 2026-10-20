@@ -1,0 +1,11 @@
+/*
+ * 免密规则（可选）：把竞赛操作手加入 `foray` 组后，自举不需要每次输密码。
+ * 不装本文件时，pkexec 仍会按 policy 里的 auth_admin_keep 弹一次授权。
+ *
+ * 安装位置：/usr/share/polkit-1/rules.d/60-foray-netconfig.rules
+ */
+polkit.addRule(function (action, subject) {
+    if (action.id === "org.foray.netconfig.bootstrap" && subject.isInGroup("foray")) {
+        return polkit.Result.YES;
+    }
+});
