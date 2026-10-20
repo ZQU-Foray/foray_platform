@@ -55,8 +55,8 @@ cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
 - `PREBUILT`：只接受 `LIVOX_SDK2_ROOT` 前缀下的 SDK；
 - 安装后的 target 导出 `FORAY_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
   `#if FORAY_DRIVER_LIVOX_HAS_SDK` 判断能力；
-- `FORAY_LIVOX_BUILD_TOOLS=ON` 构建 `foray_livox_dump`，输出 PCD 与俯视 PPM，
-  用于手动查看点云。
+- `FORAY_LIVOX_BUILD_TOOLS=ON` 构建 `foray_livox_dump`，可写 PCD 与俯视 PPM，
+  也可用 `--stream` 把点云逐点流式写到 stdout，用于手动查看与管道消费。
 
 详见 [驱动部署](docs/driver_deployment.md) 与
 [手动测试](docs/driver_livox.md#12-手动测试与点云查看)。
@@ -156,7 +156,21 @@ Livox 驱动特性：
 - `time_type` → `TimestampSync` 映射，NoSync/PPS 不伪造绝对时间；
 - 默认单播，组播作为可选自定义 JSON；
 - 编译期 `FORAY_BUILD_DRIVER_LIVOX=ON/OFF`；OFF 时 `open()` 返回 `kSdkUnavailable`；
-- `FORAY_LIVOX_BUILD_TOOLS=ON` 提供 `foray_livox_dump`（PCD + 俯视 PPM）。
+- `FORAY_LIVOX_BUILD_TOOLS=ON` 提供 `foray_livox_dump`
+  （PCD + 俯视 PPM；`--stream` 逐点流式 stdout，统计走 stderr）与
+  `foray_livox_config`（读回 → 下发雷达 IP/姿态/主机端口 → 再读回校验）。
+
+**雷达网络自举**：作为硬件抽象层的一部分，本仓必须能一键把物理网口挂进
+雷达网桥并配置主机地址，而不要求操作手现场 `sudo ip link`：
+
+- 只读探测拓扑（`foray/platform/net/net_types.hpp`）→ 幂等规划
+  （`plan_link`）→ 授权执行（`ensure_link`，失败自动回滚）；
+- NetworkManager 优先（创建 `foray-<iface>-slave` profile，重启不丢），
+  没有 NM 时回退 rtnetlink；
+- 特权只来自 polkit：`foray-net-helper` 装到 libexec，动作
+  `org.foray.netconfig.bootstrap` 只放行该程序；
+- 雷达参数下发走 `foray_livox_config`，默认只读回校验，`--set-lidar-ip`
+  等显式开关才改写，写后必读回。
 
 **急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
 位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，
@@ -190,6 +204,7 @@ Livox 驱动特性：
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 - [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
+- [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
 
 ## 参考
 

@@ -6,7 +6,7 @@
 - [x] 搭参数系统骨架（schema + 校验 + 热加载）
 - [x] 定义 HAL 抽象接口（传感器 / 执行器 / 总线 / 设备生命周期）
 - [ ] 接一个真实驱动跑通「一个传感器 → 一个话题」
-  - Livox 驱动代码与 mock 测试已完成；真实 SDK 构建 + HIL 待部署验证
+  - Livox 驱动代码与 mock 测试已完成；真实 SDK 构建 + HIL 已通过
 - [ ] 实现急停硬路径（独立实时线程 + 超时定时器）
 
 ### 任务 1 交付物
@@ -101,6 +101,9 @@
     `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`；
   - core/backend 目标拆分：mock 测试只链 core，任何开关下不依赖 SDK；
   - `FORAY_DRIVER_LIVOX_HAS_SDK=0/1` 作为已安装产物能力导出；
+  - `foray_livox_dump`：PCD + 俯视 PPM 导出、`--self-test` 自检；
+    `--stream` 逐点流式写 stdout（每帧 flush、统计走 stderr、
+    `--frames 0` 持续输出、EPIPE 视为正常结束）；
 - 文档：[docs/driver_livox.md](docs/driver_livox.md)、
   [docs/driver_deployment.md](docs/driver_deployment.md)；
 - 单测：30 个用例（29 core + 1 backend），mock 覆盖生命周期、路由、恢复、解析、组帧；
@@ -110,9 +113,29 @@
   Mid-360s `192.168.1.195`，2–3 帧 × 20064 点、IMU、PCD/PPM；
 - **未完成**：双回波 `0x11`。
 
+### M11 交付物（雷达网络自举与参数注入）
+
+- `foray_platform/include/foray/platform/net/`
+  - `net_types.hpp`：`Ipv4` / `InterfaceInfo` / `Topology` / 只读 `probe_topology()`；
+  - `process.hpp`：`ProcessRunner` 抽象（不经过 shell）；
+  - `backend.hpp` + `nm_backend.hpp` + `netlink_backend.hpp`：NM 优先、netlink 回退；
+  - `setup.hpp`：`plan_link()` 纯规划、`ensure_link()` 执行 + 逆序回滚、`select_backend()`；
+- `foray_platform/tools/foray_net_helper.cpp`：libexec helper，参数白名单，
+  polkit 动作 `org.foray.netconfig.bootstrap` 只放行该程序；
+- 驱动控制面：`LivoxApi` 增 set_lidar_ip / set_install_attitude / set_pps_sync_mode /
+  set_host_port_cfg / set_rmc_sync_time / query_internal_info；`LivoxControl`
+  统一重试与写后读回；`foray_livox_config` 工具；
+- `foray_lidar_up`：链路就绪检测 + pkexec 调 helper + 驱动启动 + 读帧健康确认
+  （退出码 2/3/4/5/6 区分驱动、网络与无帧）；
+- 文档：[docs/net_bootstrap.md](docs/net_bootstrap.md)，
+  `docs/driver_deployment.md` §2.2 改为 helper 自举；
+- 单测：平台 150 个用例（net 新增 32 个）、驱动 36 个（控制面 6 个）全绿；
+- **待 HIL**：实机雷达当前断线（`enp0s31f6` 无载波），helper 已能经 NM
+  创建 `foray-enp0s31f6-slave` 并给出"没有载波"警告。
+
 ## 当前 Agent State
 
-M10_HIL_DONE
+M11_NET_BOOTSTRAP_DONE（实机 HIL 待雷达恢复连接）
 
 ## Before Snapshot
 
@@ -147,10 +170,14 @@ Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [x] 每个新增模块带独立可执行测试（平台 127 个 + Livox 驱动 30 个用例）
+- [x] 每个新增模块带独立可执行测试（平台 151 个 + Livox 驱动 36 个用例）
 - [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
 - [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
 - [x] Livox 真实 SDK2 构建、ON 编译/链接与下游消费
 - [x] Livox 实机读取：Mid-360s 点云 + IMU + PCD/PPM
+- [x] 网络自举：probe/plan/rollback/nmcli 命令行断言覆盖，`foray-net-helper`
+      经 pkexec 实机生效（NM profile `foray-enp0s31f6-slave` 持久）
+- [x] 常规 / ASan+UBSan / TSan 三套构建全绿（平台 151 + 驱动 36）
+- [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `foray_lidar_up`）
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [ ] CI 绿灯

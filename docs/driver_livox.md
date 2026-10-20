@@ -267,6 +267,34 @@ imv /tmp/livox_cloud.ppm
 imv /tmp/livox_selftest.ppm
 ```
 
+流式输出（不落文件，直接给管道消费）：
+
+```bash
+~/.cache/foray-platform-build/livox-on/foray_livox_dump \
+  --host-ip 192.168.1.51 \
+  --lidar-ip 192.168.1.195 \
+  --stream --frames 0 \
+  | head -4
+```
+
+- stdout 每点一行 `frame x y z intensity time_s line`，首行为 `#` 表头；
+  每帧 `fflush`，输出随传感器节奏实时可见；
+- stderr 每帧一行 `[frame N] seq=... points=... interval_ms=... fps=...`，
+  结束时打印汇总（帧数、点数、字节数、平均帧率、吞吐、丢包统计）；
+- `--stream --frames 0` 表示持续输出，`Ctrl-C` / `SIGTERM` 收尾后退出；
+- 流式模式**不写** PCD/PPM，点云不再累积在内存；
+- SDK 的 console 日志默认写 stdout，会和点云混在一起：流式模式下程序先把真实
+  stdout 保存到内部 fd，再把 fd 1 重定向到 `/dev/null`，因此管道里只有干净的数据流
+  （实机验证 3 帧输出中 SDK 日志行数为 0）；需要看 SDK 日志请用非流式模式或 stderr；
+- 下游提前关闭管道（如 `| head -4`）按正常结束处理（退出码 `0`）；
+  其他写失败（如磁盘满）退出码 `7`。
+
+无雷达时验证流式格式：
+
+```bash
+~/.cache/foray-platform-build/livox-on/foray_livox_dump --self-test --stream | head -4
+```
+
 ### 12.2 官方工具（建议先做）
 
 - **Livox Viewer 2**：官方 GUI，直接看实时点云、设备 IP、工作模式；

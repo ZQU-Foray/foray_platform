@@ -128,16 +128,37 @@ ldd install/foray_platform_driver_livox/lib/libforay_platform_driver_livox.so | 
 | 子网掩码 | `255.255.255.0` |
 | 网关 | 不需要 |
 
-### 2.2 网桥（本机当前约定）
+### 2.2 网桥（推荐用 `foray-net-helper` 一键自举）
 
-本机使用 `br-lidar` 承载雷达网段：
+本机使用 `br-lidar` 承载雷达网段。不要手工 `ip link`——NetworkManager 会在几秒内
+把私下的 slave 关系拆掉；正确做法是让 helper 通过 NM 创建 `foray-<iface>-slave`
+profile（掉电重启也保留）：
 
 ```bash
-# 将以太网口挂到网桥（需要 root）
-sudo ip link set enp0s31f6 master br-lidar
-sudo ip link set br-lidar up
-ip -brief addr show br-lidar
+# 一次性安装 polkit 动作后，普通用户即可授权执行（见 §2.2.1）
+pkexec /usr/libexec/foray_platform/foray-net-helper \
+    --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51
+ip -brief addr show br-lidar      # 期望 UP + LOWER_UP + 192.168.1.51/24
 ```
+
+helper 输出 `applied:` 行说明实际改了什么，`warning:` 行给出「没有载波」等提示；
+失败会自动回滚已做的步骤，退出码：0 成功 / 1 用法 / 2 权限 / 3 配置失败 / 4 环境不支持。
+
+#### 2.2.1 polkit 授权
+
+安装（`cmake --install` 已包含）会放置：
+
+| 文件 | 作用 |
+|---|---|
+| `/usr/share/polkit-1/actions/org.foray.netconfig.policy` | 只放行 helper 一个程序 |
+| `/usr/share/polkit-1/rules.d/60-foray-netconfig.rules` | 可选：`foray` 组成员免密 |
+
+把操作手加入 `foray` 组即可无人值守；不加组时每次弹一次图形授权。
+
+#### 2.2.2 没有 NetworkManager 的环境
+
+`select_backend()` 会自动回退到 rtnetlink（`NetBackend` 的另一种实现），
+helper 仍可工作；此时 `applied:` 走内核 netlink，不会创建 NM profile。
 
 - Mid-360 为 100BASE-TX，`ethtool` 应显示 `Speed: 100Mb/s`；
 - 确认 `host_ip` 与雷达同网段，且确实配置在本机网卡上；
@@ -162,7 +183,23 @@ ip -brief addr show br-lidar
 - 非重复扫描下 `frame_cnt` 无效；驱动用 `frame_duration_ms`（默认 100 ms）
   切帧。需要 10 Hz 时保持 100，5 Hz 可设 200。
 
-### 2.4 发现与验证
+### 2.4 一键起雷达（编排）
+
+网络与驱动都有各自的工具，实战时用一条命令串起来：
+
+```bash
+foray_lidar_up --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51 \
+               --lidar-ip 192.168.1.195 --frames 3
+```
+
+- 链路未就绪时自动经 `pkexec` 调 `foray-net-helper`（不要求操作手记命令）；
+- 就绪后创建驱动、打开、`start()`，读 `--frames` 帧并打印
+  `seq/points/dropped/sync` 与统计；
+- 加 `--dry-run` 只经 helper 打印 `planned:` 计划并跳过驱动，适合现场先看会改什么；
+- 退出码：0 成功 / 1 用法 / 2 驱动创建 / 3 open / 4 start / 5 网络自举 / 6 没读到帧；
+- 要点云落盘或流式输出，继续用 `foray_livox_dump`。
+
+### 2.5 发现与验证
 
 ```bash
 ping 192.168.1.255          # 广播探测

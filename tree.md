@@ -38,6 +38,7 @@
 │   │   ├── param/               实现、内部校验与 YAML 工具
 │   │   ├── result/error.cpp
 │   │   ├── config/              resolver · exporter · tool
+│   │   ├── net/                 probe · process · NM/netlink 后端 · plan/ensure_link
 │   │   └── hal/config_binder.cpp
 │   └── test/
 │       ├── time/                时钟单测
@@ -46,6 +47,8 @@
 │       ├── container/           SPSC 队列单测
 │       ├── config/              分层 / include / env / 导出单测
 │       └── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
+│   ├── tools/foray_net_helper.cpp  特权网络自举 helper（pkexec）
+│   └── deploy/                 polkit 动作 + 免密规则
 ├── foray_platform_driver_livox/ Livox SDK2 驱动（纯 CMake，不依赖 ROS）
 │   ├── CMakeLists.txt
 │   ├── package.xml
@@ -56,6 +59,7 @@
 │   │   └── lidar.hpp            公共工厂（无 SDK 类型）
 │   ├── src/livox/
 │   │   ├── lidar.cpp/.hpp       生命周期、配置、解析线程
+│   │   ├── livox_control.cpp/.hpp  控制面重试 + 读回校验
 │   │   ├── lidar_public_factory.cpp  公共 make_lidar（后端对象）
 │   │   ├── livox_runtime.cpp/.hpp  进程级 SDK 单例与 handle 路由
 │   │   ├── livox_api.hpp        SDK 函数表抽象
@@ -65,7 +69,8 @@
 │   │   ├── frame_assembler.cpp/.hpp  组帧与逐点时间
 │   │   └── config_json.cpp/.hpp  Livox 网络 JSON
 │   ├── tools/
-│   │   └── livox_dump.cpp       点云导出（PCD/PPM）与自检
+│   │   ├── livox_dump.cpp       点云导出（PCD/PPM/流式 stdout）与自检
+│   │   └── livox_config.cpp     雷达参数读回/下发/再校验
 │   └── test/livox/              mock 单测 + backend 能力测试
 └── .github/
     └── workflows/

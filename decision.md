@@ -402,3 +402,100 @@ Rejected:
 - 在回调里按 `(a<<24)|...` 解释 handle；
 - 仅依赖 `frame_cnt` 切帧；
 - 把 IMU 原始 g 直接透传给上层。
+
+---
+
+## Decision
+
+Date: 2026-10-20
+
+Context: 手动测试需要观察驱动长时间取流是否稳定。原 `foray_livox_dump` 必须先在内存里
+攒满 N 帧再一次性写 PCD，帧数一大就吃内存，也看不到实时进度；PCD 头要求预先声明
+`WIDTH`/`POINTS`，天然不适合不定长流。
+
+Decision:
+- 新增 `--stream`：点云逐点写 stdout，每行 7 列
+  `frame x y z intensity time_s line`，首行 `#` 表头；每帧 `fflush`；
+- 每帧统计（seq / 点数 / 间隔 / 帧率）与收尾汇总写 **stderr**；
+- `--stream --frames 0` 表示持续输出；`SIGINT` / `SIGTERM` 只置标志，
+  由主循环收尾并打印汇总；
+- 管道 `EPIPE`（下游如 `head -1` 提前关闭）视为正常结束，退出码 `0`；
+  其他写失败（如磁盘满）退出码 `7`；
+- 流式模式**不写** PCD/PPM，点云不累积在内存；
+- `--self-test --stream` 复用同一写出路径，使格式可在无雷达时验证。
+
+Reason:
+- 行式文本流不需要预先知道总点数，适合不定长、可持续的测试场景；
+- 统计走 stderr 才能让 stdout 直接被管道/解析器消费；
+- 逐帧 flush 让 HIL 观察到的输出节奏与传感器一致；
+- 区分 EPIPE 与真错误，避免管道用法被误判为失败。
+
+Alternatives:
+- 每帧写一个 PCD 文件：管道场景不友好，还会堆积大量文件；
+- 二进制流：带宽更省，但无法用 `head` / `awk` 直接检查；
+- 让 `--frames N` 兼作持续模式：`N` 语义不清，容易误用。
+
+Rejected:
+- 在 stdout 混入统计日志（破坏下游解析）；
+- 依赖 SIGPIPE 默认行为终止进程（管道关闭被判成失败）。
+
+---
+
+Date: 2026-10-20
+Title: 雷达网络自举（NM 优先 + polkit helper）与参数注入读回
+Status: accepted
+Context: 比赛现场重配雷达链路要操作手手工 `sudo ip link set ... master br-lidar`，
+既慢又易错；本机 NetworkManager 还会在几秒内拆掉手工创建的 slave 关系，
+桥变成空的、抓包为 0。雷达参数（IP / 安装姿态 / 主机端口）此前只能改 JSON，
+改错 IP 会直接失联且无法从雷达侧读回验证。
+
+Decision:
+- 新增 `foray_platform::net`：只读 `probe_topology()` → 纯函数 `plan_link()` →
+  `ensure_link()` 执行，失败按逆序回滚；
+- 后端**NetworkManager 优先**（创建 `foray-<iface>-slave` profile，重启保留），
+  无 NM 时回退 rtnetlink；两者都实现同一 `NetBackend` 接口，可 mock；
+- 特权不用 setuid：`foray-net-helper` 装到 libexec，polkit 动作
+  `org.foray.netconfig.bootstrap` 用 `exec.path` 只放行该程序，参数白名单在工具内；
+  可选 `60-foray-netconfig.rules` 让 `foray` 组免密；
+- 雷达参数注入走 `LivoxControl`：总尝试 3 次、间隔 100 ms、单次等待 800 ms；
+  只对 kTimeout/kSdkError/kBusy/kNoData 重试；
+- 写参数后**必须读回**：`QueryLivoxLidarInternalInfo` 解析 `kKeyLidarIpCfg`
+  并比对；`foray_livox_config` 默认 `--dry-run` 只读，`--set-lidar-ip` 显式才改。
+
+Reason:
+- NM 是这台机（也是大部分桌面 Ubuntu）真正的网络配置权威，绕过它必然被拆；
+- polkit + 参数白名单把 root 能力收敛到一个程序，比 setuid 更容易审计；
+- 现场改 IP 一旦写错就无法再连上，读回校验是唯一可靠的防线；
+- 纯函数规划 + 假后端让"顺序/幂等/回滚"可以在没有 root 的 CI 里测。
+
+Alternatives:
+- 直接 `sudo ip link`（现状）：被 NM 拆掉，且要求操作手会敲命令；
+- setuid helper：审计面大、升级易出漏洞；
+- 只靠 netlink：桌面机上与 NM 打架；
+- 只改 JSON 不读回：无法确认雷达真的接受了新 IP。
+
+Rejected:
+- 让 helper 接受任意 shell 命令（提权面过大）；
+- 自动改写雷达 IP 而无显式开关（失联风险不可接受）。
+
+## 2026-10-20 流式输出独占 stdout
+
+Background:
+- Livox SDK2 的 console 日志写 fd 1；`foray_livox_dump --stream` 实机输出里混入 18 行
+  `[console] [info] ...`，管道消费方无法直接解析。
+
+Decision:
+- 流式模式启动时 `dup(STDOUT_FILENO)` 保存真实 stdout，`freopen("/dev/null", "w", stdout)`
+  把 fd 1 让给 SDK 日志；点云与表头一律用 `write_all()` 写到保存的 fd（`g_stream_fd`）；
+- 非流式模式保持原样（日志与 PCD/PPM 汇总都在 stdout）。
+
+Consequences:
+- 管道输出纯数据；`| head -1` 的 EPIPE 仍按正常结束（exit 0），真写失败 exit 7；
+- 代价：流式模式下看不到 SDK 日志（需要时改用非流式或抓包）。
+
+Alternatives:
+- 配置 SDK 静音日志：SDK 头文件未暴露稳定的运行时关闭接口，且日志行跨多个模块；
+- 点云改走 stderr：会与统计争用同一通道，违背既有约定。
+
+Rejected:
+- 依赖 `2>/dev/null` / `stdbuf` 等调用方约定（工具自身应保证输出契约）。
