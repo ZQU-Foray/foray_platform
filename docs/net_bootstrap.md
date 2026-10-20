@@ -17,6 +17,10 @@ NetworkManager 会把私下的 slave 关系拆掉。本模块把这段流程收�
 | netlink | `netlink_backend.hpp` | rtnetlink 实现，无 NM 时回退 |
 | 规划 | `setup.hpp` | `plan_link()` 纯函数 + `ensure_link()` 执行/回滚 + `select_backend()` |
 
+`probe_topology()` 只在 sysfs 上读，不调用 `nmcli`，因此
+`Topology::network_manager_present` 默认是 `false`，由 `select_backend()`
+探测后回填；只调探测的消费方不要拿这个标志判断「有没有 NM」。
+
 ## 2. 幂等与回滚
 
 - `link_ready(topology, iface, bridge, host_ip, min_prefix=16)` 纯函数判定
