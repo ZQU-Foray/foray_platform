@@ -9,7 +9,7 @@
 
 namespace foray_platform {
 
-// 候选 RoboLink v0.1 的槽位：一条消息的编号、序号与原始载荷。
+// 候选槽位一条消息的编号、序号与原始载荷
 struct RoboLinkSlot {
     std::uint8_t type = 0;
     std::uint8_t flags = 0;
@@ -20,15 +20,17 @@ struct RoboLinkSlot {
 // 视觉联调所需的控制快照  字段顺序和长度来自 组织候选协议
 // 云台目标角按 deg  其余角速度 rad/s
 struct ControlSnapshot {
-    std::uint32_t control_seq = 0;
-    std::uint8_t source = 2;
-    std::uint8_t mode = 2;
-    std::uint16_t flags = 0;
+    std::uint32_t control_seq = 0;   // 指令编号
+    std::uint8_t source = 2;        // 命令来源
+    std::uint8_t mode = 2;          // 使用模式 (期望使用模式)
+    std::uint16_t flags = 0;        // 哪些控制部分有效
     float chassis_vx = 0;
     float chassis_vy = 0;
     float chassis_wz = 0;
+    // 希望云台达到的目标角度  (不是当前的反馈角度！！)
     float gimbal_yaw_deg = 0;
     float gimbal_pitch_deg = 0;
+
     float gimbal_yaw_rate = 0;
     float gimbal_pitch_rate = 0;
     float friction_rads = 0;
@@ -46,7 +48,7 @@ struct SystemDiagnostics {
     std::uint8_t event_queue_depth = 0;
 };
 
-// 电控回传状态：核心 28 B，诊断尾部可选 24 B。
+// 电控回传状态 核心 28 B，诊断尾部可选 24 B
 struct SystemStatus {
     std::uint32_t uptime_ms = 0;
     std::uint8_t mode = 0;
@@ -61,7 +63,7 @@ struct SystemStatus {
     std::optional<SystemDiagnostics> diagnostics;
 };
 
-// 双端建链消息；字段布局来自候选协议 §4.1。
+// 双端建链消息    字段布局来自候选协议
 struct Hello {
     std::uint8_t proto_ver_major = 2;
     std::uint8_t proto_ver_minor = 0;
@@ -93,19 +95,19 @@ struct ErrorMessage {
     std::vector<std::uint8_t> detail;
 };
 
-// 编解码完整帧；可包含多个槽位，空槽位集合表示零槽保活帧。
+// 编解码完整帧 可包含多个槽位 空槽位集合表示零槽保活帧
 std::vector<std::uint8_t> encode_frame(
     std::uint16_t frame_seq, std::uint32_t timestamp_us,
     const std::vector<RoboLinkSlot>& slots);
 std::optional<std::vector<RoboLinkSlot>> decode_frame(
     const std::vector<std::uint8_t>& frame);
 
-// 单槽位便捷入口；参数非法时抛异常。
+// 单槽位便捷入口；参数非法时抛异常
 std::vector<std::uint8_t> encode_single_slot_frame(
     std::uint16_t frame_seq, std::uint32_t timestamp_us,
     const RoboLinkSlot& slot);
 
-// 输入应为帧解析器给出的完整帧；本函数仍独立复核长度与 CRC。
+// 输入应为帧解析器给出的完整帧；本函数仍独立复核长度与 CRC
 std::optional<RoboLinkSlot> decode_single_slot_frame(
     const std::vector<std::uint8_t>& frame);
 

@@ -11,7 +11,7 @@
 namespace foray_platform {
 namespace {
 
-// 帧头和各载荷的偏移、长度来自组织的 foray_interfaces 候选协议。
+// 帧头和各载荷的偏移、长度来自组织的 foray_interfaces 候选协议
 constexpr std::size_t kHeaderSize = 14;
 constexpr std::size_t kSlotHeaderSize = 6;
 constexpr std::size_t kCrcSize = 4;
@@ -33,7 +33,7 @@ void append_u16(std::vector<std::uint8_t>& out, std::uint16_t value)
     out.push_back(static_cast<std::uint8_t>(value));
     out.push_back(static_cast<std::uint8_t>(value >> 8));
 }
-
+// 每次移动到最右  小端序
 void append_u32(std::vector<std::uint8_t>& out, std::uint32_t value)
 {
     for (unsigned shift = 0; shift < 32; shift += 8) {
@@ -50,12 +50,12 @@ void append_u64(std::vector<std::uint8_t>& out, std::uint64_t value)
 
 void append_f32(std::vector<std::uint8_t>& out, float value)
 {
-    if (!std::isfinite(value)) {
+    if (!std::isfinite(value)) { // 判断是否有效
         throw std::invalid_argument("控制快照含非有限浮点数");
     }
     std::uint32_t bits = 0;
-    std::memcpy(&bits, &value, sizeof(bits));
-    append_u32(out, bits);
+    std::memcpy(&bits, &value, sizeof(bits)); // 复制float原始位置
+    append_u32(out, bits);   // 小端序 写入
 }
 
 std::uint16_t read_u16(const std::uint8_t* p)
@@ -97,15 +97,15 @@ bool payload_size_matches(std::uint8_t type, std::size_t size)
 
 bool class_flags_match(std::uint8_t type, std::uint8_t flags)
 {
-    // 候选协议 §2.1/§3.1：按消息类检查槽位标志，避免双方把事件误当状态。
+    // 候选协议   按消息类检查槽位标志，避免双方把事件误当状态
     switch (type) {
-    case 0x01: return flags == 0x04;  // HELLO：事件。
-    case 0x02: return flags == 0x0C;  // HELLO_ACK：事件响应。
-    case 0x03: return flags == 0x00;  // HEARTBEAT：状态。
-    case 0x04: return flags == 0x08;  // ACK：状态响应。
-    case 0x05: return flags == 0x04;  // ERROR：事件。
-    case 0x10: return flags == 0x00;  // SYSTEM_STATUS：状态。
-    case 0x20: return flags == 0x02;  // CONTROL_SNAPSHOT：最新值。
+    case 0x01: return flags == 0x04;  // HELLO：事件
+    case 0x02: return flags == 0x0C;  // HELLO_ACK：事件响应
+    case 0x03: return flags == 0x00;  // HEARTBEAT：状态
+    case 0x04: return flags == 0x08;  // ACK：状态响应
+    case 0x05: return flags == 0x04;  // ERROR：事件
+    case 0x10: return flags == 0x00;  // SYSTEM_STATUS：状态
+    case 0x20: return flags == 0x02;  // CONTROL_SNAPSHOT：最新值
     default: return false;
     }
 }
@@ -219,7 +219,7 @@ std::optional<RoboLinkSlot> decode_single_slot_frame(
     if (!slots || slots->size() != 1) return std::nullopt;
     return slots->front();
 }
-
+// 检查来源和模式和使能位是否符合目前协议
 std::vector<std::uint8_t> encode_control_snapshot_payload(
     const ControlSnapshot& snapshot)
 {
@@ -229,7 +229,7 @@ std::vector<std::uint8_t> encode_control_snapshot_payload(
     }
 
     std::vector<std::uint8_t> out;
-    out.reserve(kControlPayloadSize);
+    out.reserve(kControlPayloadSize); // 提前预留空间
     append_u32(out, snapshot.control_seq);
     out.push_back(snapshot.source);
     out.push_back(snapshot.mode);
@@ -243,8 +243,8 @@ std::vector<std::uint8_t> encode_control_snapshot_payload(
     append_f32(out, snapshot.gimbal_pitch_rate);
     append_f32(out, snapshot.friction_rads);
     append_f32(out, snapshot.feeder_rads);
-    append_u16(out, std::min<std::uint16_t>(snapshot.validity_hint_ms, 50));
-    append_u16(out, 0);  // 载荷末尾的保留字段。
+    append_u16(out, std::min<std::uint16_t>(snapshot.validity_hint_ms, 50));  // 有效期提示最多写入 50 ms；不能用提示值延长电控的硬超时
+    append_u16(out, 0);  // 载荷末尾的保留字段
     return out;
 }
 
