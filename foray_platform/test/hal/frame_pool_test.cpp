@@ -172,5 +172,44 @@ TEST(FramePoolTest, ConcurrentWriterAndReader) {
     EXPECT_GT(last_seen.load(), 0U);
 }
 
+#if defined(NDEBUG)
+// Release：违反「池由 shared_ptr 持有」的契约时降级返回空租约，不得 terminate。
+TEST(FramePoolTest, NonSharedOwnerReturnsEmptyLease) {
+    ImagePool pool(2, 64); // 栈对象，未交给 shared_ptr
+
+    EXPECT_FALSE(pool.try_acquire_latest());
+
+    // 槽位状态未被错置：写入者仍能正常取槽并发布。
+    auto writer = pool.try_acquire_writer();
+    ASSERT_TRUE(writer.has_value());
+    writer->frame().sequence = 5;
+    writer->publish();
+    EXPECT_EQ(pool.dropped(), 0U);
+    EXPECT_EQ(pool.no_slot(), 0U);
+}
+
+TEST(FramePoolTest, NonSharedOwnerKeepsPublishedSlotReadable) {
+    ImagePool pool(2, 64);
+
+    auto published = pool.try_acquire_writer();
+    ASSERT_TRUE(published.has_value());
+    published->frame().sequence = 11;
+    published->publish();
+
+    EXPECT_FALSE(pool.try_acquire_latest());
+    // 槽位仍在 kPublished：新帧替换旧帧时能回收旧槽并计数。
+    auto replacement = pool.try_acquire_writer();
+    ASSERT_TRUE(replacement.has_value());
+    replacement->publish();
+    EXPECT_EQ(pool.dropped(), 1U);
+}
+#else
+// Debug：同一误用以断言中止，便于在开发期立即发现。
+TEST(FramePoolDeathTest, NonSharedOwnerTripsAssertion) {
+    ImagePool pool(2, 64);
+    EXPECT_DEATH((void)pool.try_acquire_latest(), "shared_ptr");
+}
+#endif
+
 } // namespace
 } // namespace foray::platform::hal

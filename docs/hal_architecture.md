@@ -77,6 +77,10 @@ kFree -> kWriting -> kPublished -> kReading -> kFree
 - `Writer` 未 `publish()` 就析构时自动归还槽位；
 - `FrameLease` move-only；deleter 持有 `shared_ptr<FramePool>`，
   因此租约可以晚于设备销毁；
+- 帧池必须由 `std::shared_ptr` 持有（`std::make_shared<FramePool<T>>`）；
+  `try_acquire_latest()` 的 `noexcept` 边界不依赖该约定被遵守——违反时返回
+  空租约而非抛出 `bad_weak_ptr`（Debug 构建以断言报告误用），不会触发
+  `std::terminate`；失败发生在槽位状态变更之前，已发布帧不会被卡在 `kReading`；
 - `payload()` 是预分配字节缓冲；图像/点云的 `data`/`points` 指向它。
 
 ### 5.1 零拷贝边界

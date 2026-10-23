@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -24,7 +25,9 @@ namespace foray::platform::hal {
  * 生命周期：
  * - 必须通过 `std::make_shared<FramePool<T>>(...)` 创建；
  * - `FrameLease` 的 deleter 持有帧池的 `shared_ptr`，因此租约可以晚于
- *   设备/帧池所有者销毁。
+ *   设备/帧池所有者销毁；
+ * - 池未被 `shared_ptr` 持有时调用 `try_acquire_latest()` 返回空租约，
+ *   不抛 `bad_weak_ptr`（Debug 构建用断言报告该误用）。
  */
 template <typename T> class FramePool : public std::enable_shared_from_this<FramePool<T>> {
   public:
@@ -128,7 +131,18 @@ template <typename T> class FramePool : public std::enable_shared_from_this<Fram
     }
 
     /// @brief 获取最新已发布帧；没有可读帧时返回空租约。
+    ///
+    /// @note `noexcept` 边界：要求帧池由 `std::shared_ptr` 持有（见类文档）。
+    ///       违反该约定时返回空租约，不抛 `bad_weak_ptr` 触发 `std::terminate`；
+    ///       Debug 构建用断言中止以暴露误用。
     FrameLease<T> try_acquire_latest() noexcept {
+        // 先取弱自引用：失败时槽位状态未被改动，不会把帧永久留在 kReading。
+        std::shared_ptr<FramePool> self = this->weak_from_this().lock();
+        assert(self != nullptr && "FramePool must be owned by std::shared_ptr");
+        if (self == nullptr) {
+            return FrameLease<T>();
+        }
+
         const std::size_t index = latest_.load(std::memory_order_acquire);
         if (index == kNone) {
             return FrameLease<T>();
@@ -141,8 +155,7 @@ template <typename T> class FramePool : public std::enable_shared_from_this<Fram
             return FrameLease<T>();
         }
 
-        std::shared_ptr<FramePool> pool = this->shared_from_this();
-        std::shared_ptr<const T> frame(&slot.frame, [pool = std::move(pool), index](const T*) {
+        std::shared_ptr<const T> frame(&slot.frame, [pool = std::move(self), index](const T*) {
             pool->slots_[index].state.store(State::kFree, std::memory_order_release);
         });
         return FrameLease<T>(std::move(frame));

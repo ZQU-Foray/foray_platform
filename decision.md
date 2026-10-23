@@ -499,3 +499,36 @@ Alternatives:
 
 Rejected:
 - 依赖 `2>/dev/null` / `stdbuf` 等调用方约定（工具自身应保证输出契约）。
+
+---
+
+## Decision
+
+Date: 2026-10-23
+
+Context: `FramePool::try_acquire_latest()` 声明为 `noexcept`，内部却调用
+`shared_from_this()`；帧池未被 `std::shared_ptr` 持有时它抛 `bad_weak_ptr`，
+越过 `noexcept` 边界直接 `std::terminate`。类文档只要求「必须 make_shared」，
+接口没有强制（PR #1 review）。
+
+Decision:
+- 保留 `noexcept` 与 `FrameLease<T>` 返回类型，不改成 `Result<FrameLease<T>>`；
+- 用 `weak_from_this().lock()` 建立自引用，且放在槽位 `compare_exchange`
+  之前：失败时返回空租约，槽位状态不被改动，已发布帧不会卡在 `kReading`；
+- Debug 构建用 `assert` 报告误用；Release 降级为空租约，不中止进程；
+- 测试双构建覆盖：Release 验证降级与槽位状态，Debug 用 death test 验证断言。
+
+Reason:
+- 通用错误类型决策已定「HAL 公共 API 不抛异常」，热路径也不能引入异常；
+- 换 `Result` 属于破坏性接口变更，要同步全部驱动与测试；而且「无帧可读」
+  与「误用」对外都只能表现为空租约，调用方无法也不应区分；
+- 契约违反属于编程错误：开发期断言暴露，生产期不能因此 terminate。
+
+Alternatives:
+- 只加 `assert`：Release 下仍会 terminate，失去降级保护；
+- 静态工厂 `create()` + 私有构造：能从接口强制，但破坏现有
+  `std::make_shared<FramePool<T>>` 用法，留到确有需要时再评估。
+
+Rejected:
+- 继续调用 `shared_from_this()`：违反契约时进程直接终止，与 `noexcept`
+  声明和「公共 API 不抛异常」的约定冲突。
