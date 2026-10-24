@@ -97,10 +97,9 @@
 - 单测：`config_binder_test` +5、`manager_test` +5，全套 163 个用例通过；
 - 未做：驱动侧填充 `supported_keys()`、`SensorInfo` 补同步可观测字段。
 
-### M7/M8 交付物（Hikvision）
+### M7/M8 交付物（Hikvision）（2026-10-24，已完成）
 
-- **方案已定，代码未开工**；设计与取舍见
-  [docs/driver_hikvision.md](docs/driver_hikvision.md)。
+设计与取舍见 [docs/driver_hikvision.md](docs/driver_hikvision.md)。
 - 隔离方式沿用 Livox：`detail::MvsApi` 虚接口，`src/hikvision/mvs_api_real.cpp`
   是唯一 include `MvCameraControl.h` 的翻译单元；公共头只有 HAL 类型；
   `FORAY_BUILD_DRIVER_HIKVISION=ON/OFF` + `FORAY_MVS_ROOT`，ON 找不到 SDK 直接
@@ -109,18 +108,22 @@
   链路为 `GetImageBuffer → memcpy 到 FramePool → FreeImageBuffer`（同线程），
   不需要原始包环与解析线程；超时 100 ms 走正常控制流，不 `sleep` 轮询。
 - 设备选择严格按 HAL 约定（serial > user_defined_name > model+index > ip）：
-  空 selector 返回 `kInvalidArgument`，多候选返回 `kDeviceAmbiguous`，不默认取第 0 个。
+  空 selector 返回 `kInvalidArgument`，多候选返回 `kDeviceAmbiguous`，不默认取第 0 个；
+  枚举结果按 serial 去重（主机双 IP 会让同一相机出现两次）。
 - 时间戳：只用 `nDevTimeStampHigh/Low` + 标定偏移和/或主机接收时刻；
   `nHostTimeStamp` 单位未定义，不使用。
-- 实施清单（未开始）：
-  - 补齐 HAL 参数缺口：camera schema 与 binder 的 `device_to_host_offset_ns` /
-    `exposure_to_host_latency_ns`、`trigger.debounce_us`；
-  - `foray_platform_driver_hikvision/`：`camera.hpp` 公共工厂、`camera.cpp`
-    生命周期与取流、`mvs_nodes.cpp` 节点映射、`timestamp.cpp` 时间换算、stub；
-  - 单测：生命周期、配置映射顺序（`SetImageNodeNum` 早于 `StartGrabbing`）、
-    时间三条路径、超时/掉线/recover、帧池计数；backend OFF 断言 `kSdkUnavailable`；
-  - `foray_hikvision_dump` 工具与 HIL（1000 帧、拔插恢复、30 分钟长跑）；
-  - 部署补进 `docs/driver_deployment.md` §4。
+- 已完成：
+  - HAL 参数缺口 1/2/3 已补齐（`device_to_host_offset_ns` /
+    `exposure_to_host_latency_ns`、`trigger.debounce_us` 进 schema 与 binder）；
+  - `foray_platform_driver_hikvision/`：公共工厂、生命周期与取流、节点映射、
+    时间换算、错误映射、stub 与真实后端（`mvs_api_real.cpp`）；
+  - 81 个单测（生命周期 / 配置映射顺序 / 时间三路径 / 超时与掉线 / 帧池计数 /
+    后端能力），`FORAY_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全绿；
+  - `foray_hikvision_dump`：配置 + 取 N 帧 + 帧率/丢帧统计 + 软触发循环；
+  - 实机 HIL（MV-CS004-10GC）：720×540 @ 118–127 Hz，200 帧 0 丢包，
+    ROI 640×480、曝光/增益下发、软触发均验证通过。
+- 仍未做：拔插恢复的实机验证（`recover()` 退避逻辑有单测覆盖）、30 分钟长跑；
+  部署步骤补进 `docs/driver_deployment.md` §4 也待办。
 
 ### M9/M10 交付物（Livox）
 

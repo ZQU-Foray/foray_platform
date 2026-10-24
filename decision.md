@@ -583,3 +583,38 @@ Alternatives:
 Rejected:
 - 继续调用 `shared_from_this()`：违反契约时进程直接终止，与 `noexcept`
   声明和「公共 API 不抛异常」的约定冲突。
+
+## Decision
+
+Date: 2026-10-24
+
+Context: 落地 `foray_platform_driver_hikvision` 时，`CameraConfig::width/height` 的
+「0 表示保留设备当前分辨率」在 `mvs_nodes.cpp` 被实现成无条件下发，实机 open 直接
+返回 `MV_E_GC_RANGE`（0x80000102）；同时 `MV_CC_GetImageBuffer` 的
+`MV_FRAME_OUT` 必须原样归还才能释放缓存，而 HAL 的 `FrameView` 只暴露数据指针。
+
+Decision:
+- `Width`/`Height` 与其它几何字段一样走「非 0 才下发」，实际分辨率一律以
+  `configure_locked()` 的读回值为准，并据此决定帧池槽位与单帧字节数；
+- `RealFrameView` 保存整个 `MV_FRAME_OUT`，`free_frame()` 值拷贝后交给
+  `MV_CC_FreeImageBuffer()`，与 `MV_CC_GetImageBuffer()` 严格同线程配对；
+- 设备描述里没有可序列化的句柄载体，`enumerate()` 把原始 `MV_CC_DEVICE_INFO`
+  按 serial 缓存，`create_handle()` 未命中时重新枚举一次；
+- `MV_FRAME_OUT_INFO_EX::fExposureTime`/`fGain` 只有开启 chunk 才有值（默认恒 0），
+  帧内值为 0 时退回 `open()`/`apply()` 读回的最近一次节点值，不做推测。
+
+Reason:
+- 0 是 HAL 约定的「保留原值」哨兵，裸写既失败又会让「不带分辨率的配置」永远打不开；
+- 帧缓存的归还契约绑定 `MV_FRAME_OUT` 的全部字段，只存 `pBufAddr` 无法正确释放；
+- 现场 DHCP 会让 IP 在枚举与创建之间变化，缓存未命中重枚举比让用户重试更可靠；
+- 曝光/增益为 0 会让上层误以为「零曝光」，而设备当前值总是已知的。
+
+Alternatives:
+- 用 `MV_CC_GetIntValueEx` 先读范围再写：仍挡不住 0 非法，且多一次 IPC；
+- 让 `FrameView` 暴露 `void*` 或 MVS 类型：破坏「公共头无 SDK 类型」的隔离约定；
+- 缓存 `MV_CC_DEVICE_INFO*`（指针）：枚举列表是调用方栈变量，`MV_CC_EnumDevicesEx2`
+  返回后即失效，必须值拷贝。
+
+Rejected:
+- 无条件写 `Width`/`Height`：实机验证失败（0x80000102）；
+- 用 `nHostTimeStamp` 做时间基准：MVS 未定义其单位，只能留作诊断。
