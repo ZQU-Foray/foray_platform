@@ -21,10 +21,12 @@ using foray::platform::time::Duration;
 
 void print_usage(const char* program) {
     std::fprintf(stderr,
-                 "用法: %s <serial | 型号 | 用户自定义名> [选项]\n"
+                 "用法: %s <serial> [选项]\n"
+                 "  --model <型号>      按型号选择（需保证唯一）\n"
+                 "  --name <名称>       按用户自定义名选择\n"
                  "  --ip <地址>         按 IP 选择（GigE）\n"
-                 "  --frames <n>        取多少帧后退出（默认 5，0 = 不限）\n"
-                 "  --timeout-ms <n>    单帧读超时毫秒（默认 1000）\n"
+                 "  --frames <n>        取多少帧后退出（默认 5，0 = 不限，Ctrl-C 退出）\n"
+                 "  --timeout-ms <n>    单帧读超时毫秒（默认 1000，必须 > 0）\n"
                  "  --width <n>         期望宽度（默认用设备当前值）\n"
                  "  --height <n>        期望高度（默认用设备当前值）\n"
                  "  --exposure-us <f>   曝光时间\n"
@@ -81,15 +83,16 @@ const char* sync_name(foray::platform::hal::TimestampSync sync) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
+    // --help 必须在位置参数解析之前处理，否则会被当成 serial 去打设备。
+    if (argc < 2 || std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0) {
         print_usage(argv[0]);
-        return 2;
+        return argc < 2 ? 2 : 0;
     }
 
-    // 第一个位置参数按 serial 处理；其它选择条件走选项，避免歧义。
+    // 第一个位置参数按 serial 处理；其它选择条件走选项，逐个替换选择条件，
+    // 避免「同时给了 serial 与型号」时被驱动的优先级静默取其一。
     CameraConfig config;
-    const std::string selector = argv[1];
-    config.selector.serial = selector;
+    config.selector.serial = argv[1];
 
     std::uint64_t frames_wanted = 5;
     std::int64_t timeout_ms = 1000;
@@ -108,13 +111,23 @@ int main(int argc, char** argv) {
             print_usage(argv[0]);
             return 0;
         }
-        if (option == "--ip") {
-            const char* text = next("--ip");
+        if (option == "--model" || option == "--name" || option == "--ip") {
+            const char* text = next(option.c_str());
             if (text == nullptr) {
                 return 2;
             }
+            // 一次只用一种选择条件：后给的覆盖前面的，走哪条由驱动优先级决定。
             config.selector.serial.clear();
-            config.selector.ip_address = text;
+            config.selector.user_defined_name.clear();
+            config.selector.model.clear();
+            config.selector.ip_address.clear();
+            if (option == "--model") {
+                config.selector.model = text;
+            } else if (option == "--name") {
+                config.selector.user_defined_name = text;
+            } else {
+                config.selector.ip_address = text;
+            }
             continue;
         }
         if (option == "--frames") {
@@ -130,8 +143,9 @@ int main(int argc, char** argv) {
         if (option == "--timeout-ms") {
             const char* text = next("--timeout-ms");
             std::uint32_t value = 0;
-            if (text == nullptr || !parse_unsigned(text, value)) {
-                std::fprintf(stderr, "--timeout-ms 需要一个非负整数\n");
+            if (text == nullptr || !parse_unsigned(text, value) || value == 0) {
+                // 0 会让 read() 立即超时（HAL 语义是 timeout <= 0 直接返回），没有意义。
+                std::fprintf(stderr, "--timeout-ms 需要一个正整数\n");
                 return 2;
             }
             timeout_ms = static_cast<std::int64_t>(value);
