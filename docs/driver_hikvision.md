@@ -411,14 +411,20 @@ MVS 侧可用信息：
 
 - `option(FORAY_BUILD_DRIVER_HIKVISION "..." OFF)`：默认 OFF（与 Livox 一致）。
 - **SDK 来源**：组织私有仓 [`ZQU-Foray/mvs-sdk`](https://github.com/ZQU-Foray/mvs-sdk)
-  （首次导入 commit `0c1cd16`，SDK V4.1.2.2，`MV_CC_GetSDKVersion()` = `0x04010202`），
+  （pin commit `f0f35f7`，SDK V4.1.2.2，`MV_CC_GetSDKVersion()` = `0x04010202`），
   含 `include/` 7 头 + `lib/amd64` + `lib/arm64` 主库 + `find_package(MVS CONFIG)` 包
-  + `scripts/install.sh` 与 `scripts/verify.sh`。取得方式（择一）：
-  - `foray_ws/.repos` 追加 `third_party/mvs_sdk`，pin commit（**不使用分支**，同 Livox 范式）；
+  + `scripts/{install,install-plugins,make-bundle,verify}.sh`。取得方式（择一）：
+  - **元仓一键**：`foray_ws/scripts/import_repos.sh` 拉取 `third_party/mvs_sdk`
+    （`.repos` pin commit，**不使用分支**，同 Livox 范式），再
+    `foray_ws/scripts/install_mvs_sdk.sh --package <海康官方包>` 装到私有前缀；
   - `scripts/install.sh --prefix <p>` 后 `-DCMAKE_PREFIX_PATH=<p>`；
   - `-DMVS_ROOT=<克隆目录>` 直接指向仓库根。
-  该仓**不含**传输层插件（`libMvUsb3vTL.so` / `libMVGigEVisionSDK.so` 等）、udev 规则与
-  客户端工具——这些仍须从海康官方安装包取得，否则枚举/取流会在运行时失败。
+  传输层插件（`libMvUsb3vTL.so` / `libMVGigEVisionSDK.so` 等）**不入库**：
+  用 `scripts/install-plugins.sh --package <海康官方安装包> --prefix <p>` 按架构补齐
+  （先 `--dry-run` 看清单），缺失时表现为**枚举正常但打不开设备 / 取不到帧**。
+  需要离线分发时用 `scripts/make-bundle.sh` 打成
+  `mvs-sdk-<ver>-linux-<arch>.tar.gz` + `.sha256`（包内 `bin/install.sh` 直接可装）。
+  udev 规则与客户端工具仍只来自官方安装包。
 - `FORAY_MVS_ROOT`：SDK 根目录；`FindMVS.cmake` 用
   `find_path(MvCameraControl.h)` + `find_library(MvCameraControl)`，
   `PATH_SUFFIXES include include/hikrobot lib/64 lib/amd64 lib/aarch64 lib/arm64`，

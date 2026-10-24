@@ -524,10 +524,13 @@ Decision:
   Bayer→RGB 属视觉层；不做 `libusb_reset_device`，异常只置 `kError`，恢复由
   `recover()` 重新枚举重开。
 - SDK 分发：闭源二进制不进本仓，统一放组织私有仓 `ZQU-Foray/mvs-sdk`
-  （private，SDK V4.1.2.2，`0c1cd16` 首次导入）。消费方按 Livox 范式 pin commit，
-  不引用分支；该仓同时提供 `find_package(MVS CONFIG)` 与 `scripts/install.sh`，
-  消费方只需 `FORAY_MVS_ROOT` 或 `CMAKE_PREFIX_PATH`。仓内不含传输层插件
-  （`libMvUsb3vTL.so` 等）、udev 规则与客户端工具，这些仍从官方安装包取得。
+  （private，SDK V4.1.2.2，pin `f0f35f7`）。消费方按 Livox 范式 pin commit，
+  不引用分支（元仓 `foray_ws/.repos` 已 pin `third_party/mvs_sdk`）；该仓同时提供
+  `find_package(MVS CONFIG)`、`scripts/install.sh` 与 `scripts/install-plugins.sh`，
+  消费方只需 `FORAY_MVS_ROOT` 或 `CMAKE_PREFIX_PATH`。传输层插件
+  （`libMvUsb3vTL.so` 等）**不入库**：由 `install-plugins.sh --package <官方包>`
+  从海康安装包按架构补齐，`make-bundle.sh` 可打成 tar.gz 离线分发；
+  udev 规则与客户端工具仍只来自官方安装包。缺失插件时表现为枚举正常但打不开设备。
 
 Consequences:
 - mock 测试可在无 MVS 的机器上覆盖生命周期、配置顺序与时间换算；
