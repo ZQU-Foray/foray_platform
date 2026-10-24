@@ -144,7 +144,7 @@ colcon test --event-handlers console_direct+
 | 包 | 接口 | 状态 |
 |---|---|---|
 | `foray_platform_driver_livox` | `foray::platform::driver::livox::make_lidar(const hal::LidarConfig&)` | **代码、mock 测试与实机 HIL 已完成**（Mid-360s） |
-| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | 未开始（M7/M8） |
+| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | 方案已定、待实施（M7/M8），见 [接入与封装方案](docs/driver_hikvision.md) |
 
 Livox 驱动特性：
 
@@ -203,6 +203,7 @@ Livox 驱动特性：
 - [L2 HAL 架构](docs/hal_architecture.md)——生命周期、线程模型、帧池与零拷贝边界
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 - [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
+- [Hikvision 驱动方案](docs/driver_hikvision.md)——MVS 接入序列、`MvsApi` 隔离、取流线程、配置映射与时间戳
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
 - [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
 

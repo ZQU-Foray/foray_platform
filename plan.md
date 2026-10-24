@@ -83,6 +83,31 @@
 - `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
 - 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
 
+### M7/M8 交付物（Hikvision）
+
+- **方案已定，代码未开工**；设计与取舍见
+  [docs/driver_hikvision.md](docs/driver_hikvision.md)。
+- 隔离方式沿用 Livox：`detail::MvsApi` 虚接口，`src/hikvision/mvs_api_real.cpp`
+  是唯一 include `MvCameraControl.h` 的翻译单元；公共头只有 HAL 类型；
+  `FORAY_BUILD_DRIVER_HIKVISION=ON/OFF` + `FORAY_MVS_ROOT`，ON 找不到 SDK 直接
+  `FATAL_ERROR`；core/backend 两个 OBJECT 目标，mock 测试不链 MVS。
+- 取流模型不同于 Livox：`MV_CC_GetImageBuffer` 是阻塞调用，取流线程即生产者，
+  链路为 `GetImageBuffer → memcpy 到 FramePool → FreeImageBuffer`（同线程），
+  不需要原始包环与解析线程；超时 100 ms 走正常控制流，不 `sleep` 轮询。
+- 设备选择严格按 HAL 约定（serial > user_defined_name > model+index > ip）：
+  空 selector 返回 `kInvalidArgument`，多候选返回 `kDeviceAmbiguous`，不默认取第 0 个。
+- 时间戳：只用 `nDevTimeStampHigh/Low` + 标定偏移和/或主机接收时刻；
+  `nHostTimeStamp` 单位未定义，不使用。
+- 实施清单（未开始）：
+  - 补齐 HAL 参数缺口：camera schema 与 binder 的 `device_to_host_offset_ns` /
+    `exposure_to_host_latency_ns`、`trigger.debounce_us`；
+  - `foray_platform_driver_hikvision/`：`camera.hpp` 公共工厂、`camera.cpp`
+    生命周期与取流、`mvs_nodes.cpp` 节点映射、`timestamp.cpp` 时间换算、stub；
+  - 单测：生命周期、配置映射顺序（`SetImageNodeNum` 早于 `StartGrabbing`）、
+    时间三条路径、超时/掉线/recover、帧池计数；backend OFF 断言 `kSdkUnavailable`；
+  - `foray_hikvision_dump` 工具与 HIL（1000 帧、拔插恢复、30 分钟长跑）；
+  - 部署补进 `docs/driver_deployment.md` §4。
+
 ### M9/M10 交付物（Livox）
 
 - `foray_platform_driver_livox/`（纯 CMake，不依赖 ROS）

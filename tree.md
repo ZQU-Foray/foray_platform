@@ -20,6 +20,7 @@
 │   ├── hal_architecture.md      HAL 生命周期、帧池与零拷贝
 │   ├── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
 │   ├── driver_livox.md          Livox 驱动：运行时、解析、组帧与时间语义
+│   ├── driver_hikvision.md      海康 MVS 驱动：接入序列、隔离与时间戳（方案）
 │   └── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
 ├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
 │   ├── CMakeLists.txt
