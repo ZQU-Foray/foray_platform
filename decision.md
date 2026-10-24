@@ -524,7 +524,7 @@ Decision:
   Bayer→RGB 属视觉层；不做 `libusb_reset_device`，异常只置 `kError`，恢复由
   `recover()` 重新枚举重开。
 - SDK 分发：闭源二进制不进本仓，统一放组织私有仓 `ZQU-Foray/mvs-sdk`
-  （private，SDK V4.1.2.2，pin `353b584`）。消费方按 Livox 范式 pin commit，
+  （private，SDK V4.8.0.3，pin `b55df46`）。消费方按 Livox 范式 pin commit，
   不引用分支（元仓 `foray_ws/.repos` 已 pin `third_party/mvs_sdk`）；该仓同时提供
   `find_package(MVS CONFIG)`、`scripts/install.sh` 与 `scripts/install-plugins.sh`，
   消费方只需 `FORAY_MVS_ROOT` 或 `CMAKE_PREFIX_PATH`。传输层插件

@@ -219,6 +219,13 @@ state = kOpen
 `selector.index` 只在「model 匹配 + 候选恰好只有一种型号」时用于消歧；
 **不**把 index 当作「随便取第 i 个」的逃生门。
 
+实机结论（2026-10-24）：主机网卡同时持有 `192.168.1.51/24` 与
+`169.254.114.1/16` 时，同一台相机（`MV-CS004-10GC` / `DB0985207` /
+`169.254.114.9`）会被 `MV_CC_EnumDevices` **枚举出两次**，两条记录的 serial 与 IP
+完全相同；直接用 `/opt/MVS/lib/64` 跑同样返回 2 条，与本仓 SDK 布局无关。
+因此 `enumerate()` 必须**按 serial 去重**（GigE 与 USB3 各自去重后再合并），
+否则 `model` 选择路径会误判 `kDeviceAmbiguous`。
+
 ### 4.3 `start()` / `stop()` / `close()` / `recover()`
 
 - `start()`：已 `kStreaming` 幂等返回；非 `kOpen` → `kNotOpen`；
@@ -426,8 +433,9 @@ MVS 侧可用信息：
 
 - `option(FORAY_BUILD_DRIVER_HIKVISION "..." OFF)`：默认 OFF（与 Livox 一致）。
 - **SDK 来源**：组织私有仓 [`ZQU-Foray/mvs-sdk`](https://github.com/ZQU-Foray/mvs-sdk)
-  （pin commit `353b584`，SDK V4.1.2.2，`MV_CC_GetSDKVersion()` = `0x04010202`），
-  含 `include/` 7 头 + `lib/amd64` + `lib/arm64` 主库 + `find_package(MVS CONFIG)` 包
+  （pin commit `b55df46`，SDK V4.8.0.3，`MV_CC_GetSDKVersion()` = `0x04080003`），
+  含 `include/` 7 头 + `lib/amd64` 主库（x86-64 only，实车与开发机均为 x86_64）
+  + `find_package(MVS CONFIG)` 包
   + `scripts/{install,install-plugins,make-bundle,verify}.sh`。取得方式（择一）：
   - **元仓一键**：`foray_ws/scripts/import_repos.sh` 拉取 `third_party/mvs_sdk`
     （`.repos` pin commit，**不使用分支**，同 Livox 范式），再
