@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
+find_dependency(Threads)
+find_dependency(foray_platform)
+
+if(@FORAY_DRIVER_HIKVISION_NEEDS_SDK_AT_LINK@)
+    find_dependency(MVS)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/foray_platform_driver_hikvisionTargets.cmake")
+
+# 告诉调用方编译期是否真的拿到了 MVS：OFF 时工厂只返回 kSdkUnavailable。
+set(FORAY_DRIVER_HIKVISION_HAS_SDK @FORAY_DRIVER_HIKVISION_HAS_SDK_VALUE@)
+
+check_required_components(foray_platform_driver_hikvision)
