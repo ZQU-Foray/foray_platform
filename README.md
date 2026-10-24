@@ -205,6 +205,7 @@ Livox 驱动特性：
 - [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
 - [Hikvision 驱动方案](docs/driver_hikvision.md)——MVS 接入序列、`MvsApi` 隔离、取流线程、配置映射与时间戳
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
+- [厂商 SDK 打包调研](docs/sdk_packaging_survey.md)——RM 战队如何打包与调用 MVS 等闭源相机 SDK（横评）
 - [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
 
 ## 参考
