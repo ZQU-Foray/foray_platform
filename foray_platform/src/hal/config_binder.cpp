@@ -110,6 +110,32 @@ std::optional<TriggerActivation> parse_trigger_activation(std::string_view text)
     return std::nullopt;
 }
 
+std::optional<AutoMode> parse_auto_mode(std::string_view text) {
+    if (text == "off") {
+        return AutoMode::kOff;
+    }
+    if (text == "once") {
+        return AutoMode::kOnce;
+    }
+    if (text == "continuous") {
+        return AutoMode::kContinuous;
+    }
+    return std::nullopt;
+}
+
+std::optional<TimestampSource> parse_timestamp_source(std::string_view text) {
+    if (text == "auto") {
+        return TimestampSource::kAuto;
+    }
+    if (text == "device") {
+        return TimestampSource::kDevice;
+    }
+    if (text == "host_receive") {
+        return TimestampSource::kHostReceive;
+    }
+    return std::nullopt;
+}
+
 std::optional<LidarConfig::PointDataType> parse_data_type(std::string_view text) {
     if (text == "high") {
         return LidarConfig::PointDataType::kHigh;
@@ -266,9 +292,154 @@ param::ParamSchema make_camera_param_schema() {
         make_spec("camera.allow_unsynced_stamp", param::ParamType::kBool, param::ParamValue(true));
     add(schema, std::move(unsynced));
 
+    param::ParamSpec binning_h =
+        make_spec("camera.binning_horizontal", param::ParamType::kInt, param::ParamValue(0));
+    binning_h.minimum = param::ParamValue(0);
+    binning_h.maximum = param::ParamValue(64);
+    binning_h.hot_reloadable = false;
+    binning_h.description = "水平合并；0 表示不改设备值";
+    add(schema, std::move(binning_h));
+
+    param::ParamSpec binning_v =
+        make_spec("camera.binning_vertical", param::ParamType::kInt, param::ParamValue(0));
+    binning_v.minimum = param::ParamValue(0);
+    binning_v.maximum = param::ParamValue(64);
+    binning_v.hot_reloadable = false;
+    add(schema, std::move(binning_v));
+
+    param::ParamSpec decimation_h =
+        make_spec("camera.decimation_horizontal", param::ParamType::kInt, param::ParamValue(0));
+    decimation_h.minimum = param::ParamValue(0);
+    decimation_h.maximum = param::ParamValue(64);
+    decimation_h.hot_reloadable = false;
+    decimation_h.description = "水平抽点；0 表示不改设备值";
+    add(schema, std::move(decimation_h));
+
+    param::ParamSpec decimation_v =
+        make_spec("camera.decimation_vertical", param::ParamType::kInt, param::ParamValue(0));
+    decimation_v.minimum = param::ParamValue(0);
+    decimation_v.maximum = param::ParamValue(64);
+    decimation_v.hot_reloadable = false;
+    add(schema, std::move(decimation_v));
+
+    param::ParamSpec frame_rate_enable = make_spec(
+        "camera.frame_rate_enable", param::ParamType::kBool, param::ParamValue(true));
+    frame_rate_enable.description = "AcquisitionFrameRateEnable";
+    add(schema, std::move(frame_rate_enable));
+
+    param::ParamSpec exposure_auto = make_spec("camera.exposure_auto", param::ParamType::kString,
+                                               param::ParamValue("off"));
+    allow(exposure_auto, {"off", "once", "continuous"});
+    exposure_auto.description = "曝光自动模式；非 off 时 camera.exposure_us 被忽略";
+    add(schema, std::move(exposure_auto));
+
+    param::ParamSpec exposure_lower = make_spec(
+        "camera.exposure_auto_lower_us", param::ParamType::kDouble, param::ParamValue(-1.0));
+    exposure_lower.minimum = param::ParamValue(-1.0);
+    exposure_lower.maximum = param::ParamValue(10000000.0);
+    exposure_lower.description = "自动曝光下限（微秒）；-1 表示未设置";
+    add(schema, std::move(exposure_lower));
+
+    param::ParamSpec exposure_upper = make_spec(
+        "camera.exposure_auto_upper_us", param::ParamType::kDouble, param::ParamValue(-1.0));
+    exposure_upper.minimum = param::ParamValue(-1.0);
+    exposure_upper.maximum = param::ParamValue(10000000.0);
+    exposure_upper.description = "自动曝光上限（微秒）；-1 表示未设置";
+    add(schema, std::move(exposure_upper));
+
+    param::ParamSpec gain_auto = make_spec("camera.gain_auto", param::ParamType::kString,
+                                           param::ParamValue("off"));
+    allow(gain_auto, {"off", "once", "continuous"});
+    gain_auto.description = "增益自动模式；非 off 时 camera.gain_db 被忽略";
+    add(schema, std::move(gain_auto));
+
+    param::ParamSpec gain_lower = make_spec("camera.gain_auto_lower_db", param::ParamType::kDouble,
+                                            param::ParamValue(-1.0));
+    gain_lower.minimum = param::ParamValue(-1.0);
+    gain_lower.maximum = param::ParamValue(48.0);
+    gain_lower.description = "自动增益下限（dB）；-1 表示未设置";
+    add(schema, std::move(gain_lower));
+
+    param::ParamSpec gain_upper = make_spec("camera.gain_auto_upper_db", param::ParamType::kDouble,
+                                            param::ParamValue(-1.0));
+    gain_upper.minimum = param::ParamValue(-1.0);
+    gain_upper.maximum = param::ParamValue(48.0);
+    gain_upper.description = "自动增益上限（dB）；-1 表示未设置";
+    add(schema, std::move(gain_upper));
+
+    param::ParamSpec trigger_source = make_spec("camera.trigger_source", param::ParamType::kString,
+                                                param::ParamValue(""));
+    trigger_source.hot_reloadable = false;
+    allow(trigger_source, {"", "software", "line0", "line1", "line2", "line3"});
+    trigger_source.description = "显式触发源；空表示由 camera.trigger_mode 推导";
+    add(schema, std::move(trigger_source));
+
+    param::ParamSpec trigger_debounce = make_spec(
+        "camera.trigger_debounce_us", param::ParamType::kDouble, param::ParamValue(-1.0));
+    trigger_debounce.minimum = param::ParamValue(-1.0);
+    trigger_debounce.maximum = param::ParamValue(1000000.0);
+    trigger_debounce.description = "触发线路去抖时间（微秒）；-1 表示未设置";
+    add(schema, std::move(trigger_debounce));
+
+    param::ParamSpec packet_size =
+        make_spec("camera.packet_size", param::ParamType::kInt, param::ParamValue(0));
+    packet_size.minimum = param::ParamValue(0);
+    packet_size.maximum = param::ParamValue(65535);
+    packet_size.hot_reloadable = false;
+    packet_size.description = "GevSCPSPacketSize；0 表示不改设备值（巨帧常见 9000）";
+    add(schema, std::move(packet_size));
+
+    param::ParamSpec inter_packet = make_spec(
+        "camera.inter_packet_delay_us", param::ParamType::kInt, param::ParamValue(-1));
+    inter_packet.minimum = param::ParamValue(-1);
+    inter_packet.maximum = param::ParamValue(1000000);
+    inter_packet.hot_reloadable = false;
+    inter_packet.description = "GevSCPD 包间延迟（微秒）；-1 表示未设置";
+    add(schema, std::move(inter_packet));
+
+    param::ParamSpec heartbeat = make_spec("camera.heartbeat_timeout_ms", param::ParamType::kInt,
+                                           param::ParamValue(-1));
+    heartbeat.minimum = param::ParamValue(-1);
+    heartbeat.maximum = param::ParamValue(600000);
+    heartbeat.hot_reloadable = false;
+    heartbeat.description = "GevHeartbeatTimeout（毫秒）；-1 表示未设置";
+    add(schema, std::move(heartbeat));
+
+    param::ParamSpec net_export =
+        make_spec("camera.net_export", param::ParamType::kInt, param::ParamValue(-1));
+    net_export.minimum = param::ParamValue(-1);
+    net_export.maximum = param::ParamValue(255);
+    net_export.hot_reloadable = false;
+    net_export.description = "枚举结果中的 nNetExport（网卡索引）；-1 表示自动";
+    add(schema, std::move(net_export));
+
+    param::ParamSpec pool_limit = make_spec("camera.pool_memory_limit_bytes",
+                                            param::ParamType::kInt, param::ParamValue(0));
+    pool_limit.minimum = param::ParamValue(0);
+    pool_limit.hot_reloadable = false;
+    pool_limit.description = "帧池总内存上限（字节）；0 表示不限制";
+    add(schema, std::move(pool_limit));
+
+    param::ParamSpec timestamp_source = make_spec(
+        "camera.timestamp_source", param::ParamType::kString, param::ParamValue("auto"));
+    allow(timestamp_source, {"auto", "device", "host_receive"});
+    timestamp_source.description = "时间戳来源策略；auto 走 driver_hikvision.md §7 的优先级";
+    add(schema, std::move(timestamp_source));
+
+    param::ParamSpec device_offset = make_spec(
+        "camera.device_to_host_offset_ns", param::ParamType::kInt, param::ParamValue(0));
+    device_offset.description = "设备计数→主机时间的标定偏移（纳秒）；0 表示未标定";
+    add(schema, std::move(device_offset));
+
+    param::ParamSpec exposure_latency = make_spec(
+        "camera.exposure_to_host_latency_ns", param::ParamType::kDouble, param::ParamValue(-1.0));
+    exposure_latency.minimum = param::ParamValue(-1.0);
+    exposure_latency.maximum = param::ParamValue(1000000000.0);
+    exposure_latency.description = "曝光→主机接收的标定延迟（纳秒）；-1 表示未标定";
+    add(schema, std::move(exposure_latency));
+
     param::ParamSpec frame_id =
         make_spec("camera.frame_id", param::ParamType::kString, param::ParamValue("camera"));
-    frame_id.hot_reloadable = false;
     add(schema, std::move(frame_id));
 
     return schema;
@@ -472,16 +643,129 @@ Result<CameraConfig> bind_camera_config(const param::ParamSnapshot& snapshot) {
     }
     config.trigger.activation = *activation;
 
+    config.binning_horizontal =
+        static_cast<std::uint32_t>(snapshot.get_int("camera.binning_horizontal", 0));
+    config.binning_vertical =
+        static_cast<std::uint32_t>(snapshot.get_int("camera.binning_vertical", 0));
+    config.decimation_horizontal =
+        static_cast<std::uint32_t>(snapshot.get_int("camera.decimation_horizontal", 0));
+    config.decimation_vertical =
+        static_cast<std::uint32_t>(snapshot.get_int("camera.decimation_vertical", 0));
+
+    config.frame_rate_enable = snapshot.get_bool("camera.frame_rate_enable", true);
+
+    const std::string exposure_auto_text = snapshot.get_string("camera.exposure_auto", "off");
+    const std::optional<AutoMode> exposure_auto = parse_auto_mode(exposure_auto_text);
+    if (!exposure_auto.has_value()) {
+        return invalid<CameraConfig>("camera.exposure_auto: unknown value '" + exposure_auto_text +
+                                     "'");
+    }
+    config.exposure_auto = *exposure_auto;
+    const double exposure_lower = snapshot.get_double("camera.exposure_auto_lower_us", -1.0);
+    if (exposure_lower >= 0.0) {
+        config.exposure_auto_lower_us = exposure_lower;
+    }
+    const double exposure_upper = snapshot.get_double("camera.exposure_auto_upper_us", -1.0);
+    if (exposure_upper >= 0.0) {
+        config.exposure_auto_upper_us = exposure_upper;
+    }
+
+    const std::string gain_auto_text = snapshot.get_string("camera.gain_auto", "off");
+    const std::optional<AutoMode> gain_auto = parse_auto_mode(gain_auto_text);
+    if (!gain_auto.has_value()) {
+        return invalid<CameraConfig>("camera.gain_auto: unknown value '" + gain_auto_text + "'");
+    }
+    config.gain_auto = *gain_auto;
+    const double gain_lower = snapshot.get_double("camera.gain_auto_lower_db", -1.0);
+    if (gain_lower >= 0.0) {
+        config.gain_auto_lower_db = gain_lower;
+    }
+    const double gain_upper = snapshot.get_double("camera.gain_auto_upper_db", -1.0);
+    if (gain_upper >= 0.0) {
+        config.gain_auto_upper_db = gain_upper;
+    }
+
+    const std::string trigger_source_text = snapshot.get_string("camera.trigger_source", "");
+    if (!trigger_source_text.empty()) {
+        const std::optional<TriggerMode> source = parse_trigger_mode(trigger_source_text);
+        if (!source.has_value() || *source == TriggerMode::kOff) {
+            return invalid<CameraConfig>("camera.trigger_source: unknown value '" +
+                                         trigger_source_text + "'");
+        }
+        config.trigger.source = *source;
+    }
+
+    const double debounce = snapshot.get_double("camera.trigger_debounce_us", -1.0);
+    if (debounce >= 0.0) {
+        config.trigger.debounce_us = debounce;
+    }
+
     config.buffer_count = static_cast<std::uint32_t>(snapshot.get_int("camera.buffer_count", 4));
     config.sdk_node_count =
         static_cast<std::uint32_t>(snapshot.get_int("camera.sdk_node_count", 5));
+    config.pool_memory_limit_bytes =
+        static_cast<std::size_t>(snapshot.get_int("camera.pool_memory_limit_bytes", 0));
+
+    config.packet_size = static_cast<std::uint32_t>(snapshot.get_int("camera.packet_size", 0));
+    const std::int64_t inter_packet = snapshot.get_int("camera.inter_packet_delay_us", -1);
+    if (inter_packet >= 0) {
+        config.inter_packet_delay_us = static_cast<std::uint32_t>(inter_packet);
+    }
+    const std::int64_t heartbeat = snapshot.get_int("camera.heartbeat_timeout_ms", -1);
+    if (heartbeat >= 0) {
+        config.heartbeat_timeout_ms = static_cast<std::uint32_t>(heartbeat);
+    }
+    const std::int64_t net_export = snapshot.get_int("camera.net_export", -1);
+    if (net_export >= 0) {
+        config.net_export = net_export;
+    }
+
     config.enable_ptp = snapshot.get_bool("camera.enable_ptp", false);
+
+    const std::string timestamp_source_text = snapshot.get_string("camera.timestamp_source", "auto");
+    const std::optional<TimestampSource> timestamp_source =
+        parse_timestamp_source(timestamp_source_text);
+    if (!timestamp_source.has_value()) {
+        return invalid<CameraConfig>("camera.timestamp_source: unknown value '" +
+                                     timestamp_source_text + "'");
+    }
+    config.timestamp_source = *timestamp_source;
+
+    const std::int64_t device_offset = snapshot.get_int("camera.device_to_host_offset_ns", 0);
+    if (device_offset != 0) {
+        config.device_to_host_offset_ns = device_offset;
+    }
+    const double exposure_latency = snapshot.get_double("camera.exposure_to_host_latency_ns", -1.0);
+    if (exposure_latency >= 0.0) {
+        config.exposure_to_host_latency_ns = exposure_latency;
+    }
+
     config.allow_unsynced_stamp = snapshot.get_bool("camera.allow_unsynced_stamp", true);
     config.frame_id = snapshot.get_string("camera.frame_id", "camera");
 
     if (config.trigger.mode != TriggerMode::kOff && config.frame_rate_hz.has_value()) {
         return invalid<CameraConfig>(
             "camera.frame_rate_hz must be unset (0) when hardware/software trigger is enabled");
+    }
+    if (config.trigger.source.has_value()) {
+        if (config.trigger.mode == TriggerMode::kOff) {
+            return invalid<CameraConfig>(
+                "camera.trigger_source requires camera.trigger_mode to be software or lineN");
+        }
+        if (*config.trigger.source != config.trigger.mode) {
+            return invalid<CameraConfig>(
+                "camera.trigger_source must match camera.trigger_mode when both are set");
+        }
+    }
+    if (config.exposure_auto_lower_us.has_value() && config.exposure_auto_upper_us.has_value() &&
+        *config.exposure_auto_lower_us > *config.exposure_auto_upper_us) {
+        return invalid<CameraConfig>(
+            "camera.exposure_auto_lower_us must not exceed camera.exposure_auto_upper_us");
+    }
+    if (config.gain_auto_lower_db.has_value() && config.gain_auto_upper_db.has_value() &&
+        *config.gain_auto_lower_db > *config.gain_auto_upper_db) {
+        return invalid<CameraConfig>(
+            "camera.gain_auto_lower_db must not exceed camera.gain_auto_upper_db");
     }
     if (config.selector.transport == Transport::kUsb3 && config.selector.serial.empty()) {
         return invalid<CameraConfig>("camera.serial is required for USB3 transport");

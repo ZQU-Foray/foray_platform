@@ -147,5 +147,129 @@ TEST(ConfigBinderTest, LidarLineNumZeroMeansAuto) {
     EXPECT_EQ(*explicit_result.value().line_num, 4U);
 }
 
+TEST(ConfigBinderTest, CameraBindsExtendedDefaults) {
+    const param::ParamSchema schema = make_camera_param_schema();
+    const param::ParamSnapshot snapshot =
+        make_snapshot(schema, param::ParamValueMap{{"camera.serial", param::ParamValue("DA123")}});
+
+    const Result<CameraConfig> result = bind_camera_config(snapshot);
+
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const CameraConfig& config = result.value();
+    EXPECT_EQ(config.exposure_auto, AutoMode::kOff);
+    EXPECT_EQ(config.gain_auto, AutoMode::kOff);
+    EXPECT_EQ(config.timestamp_source, TimestampSource::kAuto);
+    EXPECT_EQ(config.packet_size, 0U);
+    EXPECT_EQ(config.binning_horizontal, 0U);
+    EXPECT_EQ(config.decimation_vertical, 0U);
+    EXPECT_EQ(config.pool_memory_limit_bytes, 0U);
+    EXPECT_TRUE(config.frame_rate_enable);
+    EXPECT_FALSE(config.trigger.source.has_value());
+    EXPECT_FALSE(config.trigger.debounce_us.has_value());
+    EXPECT_FALSE(config.exposure_auto_lower_us.has_value());
+    EXPECT_FALSE(config.gain_auto_upper_db.has_value());
+    EXPECT_FALSE(config.net_export.has_value());
+    EXPECT_FALSE(config.device_to_host_offset_ns.has_value());
+}
+
+TEST(ConfigBinderTest, CameraBindsExtendedValues) {
+    const param::ParamSchema schema = make_camera_param_schema();
+    const param::ParamSnapshot snapshot = make_snapshot(
+        schema, param::ParamValueMap{
+                    {"camera.serial", param::ParamValue("DA123")},
+                    {"camera.binning_horizontal", param::ParamValue(2)},
+                    {"camera.decimation_vertical", param::ParamValue(3)},
+                    {"camera.exposure_auto", param::ParamValue("continuous")},
+                    {"camera.exposure_auto_lower_us", param::ParamValue(100.0)},
+                    {"camera.exposure_auto_upper_us", param::ParamValue(8000.0)},
+                    {"camera.gain_auto", param::ParamValue("once")},
+                    {"camera.gain_auto_lower_db", param::ParamValue(0.0)},
+                    {"camera.gain_auto_upper_db", param::ParamValue(12.0)},
+                    {"camera.trigger_mode", param::ParamValue("software")},
+                    {"camera.trigger_source", param::ParamValue("software")},
+                    {"camera.trigger_debounce_us", param::ParamValue(50.0)},
+                    {"camera.packet_size", param::ParamValue(9000)},
+                    {"camera.inter_packet_delay_us", param::ParamValue(20)},
+                    {"camera.heartbeat_timeout_ms", param::ParamValue(5000)},
+                    {"camera.net_export", param::ParamValue(2)},
+                    {"camera.pool_memory_limit_bytes", param::ParamValue(268435456)},
+                    {"camera.timestamp_source", param::ParamValue("device")},
+                    {"camera.device_to_host_offset_ns", param::ParamValue(-1500)},
+                    {"camera.exposure_to_host_latency_ns", param::ParamValue(2500000.0)},
+                });
+
+    const Result<CameraConfig> result = bind_camera_config(snapshot);
+
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const CameraConfig& config = result.value();
+    EXPECT_EQ(config.binning_horizontal, 2U);
+    EXPECT_EQ(config.decimation_vertical, 3U);
+    EXPECT_EQ(config.exposure_auto, AutoMode::kContinuous);
+    ASSERT_TRUE(config.exposure_auto_lower_us.has_value());
+    EXPECT_DOUBLE_EQ(*config.exposure_auto_lower_us, 100.0);
+    ASSERT_TRUE(config.exposure_auto_upper_us.has_value());
+    EXPECT_DOUBLE_EQ(*config.exposure_auto_upper_us, 8000.0);
+    EXPECT_EQ(config.gain_auto, AutoMode::kOnce);
+    ASSERT_TRUE(config.gain_auto_upper_db.has_value());
+    EXPECT_DOUBLE_EQ(*config.gain_auto_upper_db, 12.0);
+    EXPECT_EQ(config.trigger.mode, TriggerMode::kSoftware);
+    ASSERT_TRUE(config.trigger.source.has_value());
+    EXPECT_EQ(*config.trigger.source, TriggerMode::kSoftware);
+    ASSERT_TRUE(config.trigger.debounce_us.has_value());
+    EXPECT_DOUBLE_EQ(*config.trigger.debounce_us, 50.0);
+    EXPECT_EQ(config.packet_size, 9000U);
+    ASSERT_TRUE(config.inter_packet_delay_us.has_value());
+    EXPECT_EQ(*config.inter_packet_delay_us, 20U);
+    ASSERT_TRUE(config.heartbeat_timeout_ms.has_value());
+    EXPECT_EQ(*config.heartbeat_timeout_ms, 5000U);
+    ASSERT_TRUE(config.net_export.has_value());
+    EXPECT_EQ(*config.net_export, 2);
+    EXPECT_EQ(config.pool_memory_limit_bytes, 268435456U);
+    EXPECT_EQ(config.timestamp_source, TimestampSource::kDevice);
+    ASSERT_TRUE(config.device_to_host_offset_ns.has_value());
+    EXPECT_EQ(*config.device_to_host_offset_ns, -1500);
+    ASSERT_TRUE(config.exposure_to_host_latency_ns.has_value());
+    EXPECT_DOUBLE_EQ(*config.exposure_to_host_latency_ns, 2500000.0);
+}
+
+TEST(ConfigBinderTest, CameraRejectsTriggerSourceWithoutMode) {
+    const param::ParamSchema schema = make_camera_param_schema();
+    const param::ParamSnapshot snapshot = make_snapshot(
+        schema, param::ParamValueMap{{"camera.serial", param::ParamValue("DA123")},
+                                     {"camera.trigger_source", param::ParamValue("line0")}});
+
+    const Result<CameraConfig> result = bind_camera_config(snapshot);
+
+    EXPECT_FALSE(result.ok());
+}
+
+TEST(ConfigBinderTest, CameraRejectsTriggerSourceMismatch) {
+    const param::ParamSchema schema = make_camera_param_schema();
+    const param::ParamSnapshot snapshot = make_snapshot(
+        schema, param::ParamValueMap{{"camera.serial", param::ParamValue("DA123")},
+                                     {"camera.trigger_mode", param::ParamValue("software")},
+                                     {"camera.trigger_source", param::ParamValue("line1")}});
+
+    const Result<CameraConfig> result = bind_camera_config(snapshot);
+
+    EXPECT_FALSE(result.ok());
+}
+
+TEST(ConfigBinderTest, CameraRejectsInvertedAutoRanges) {
+    const param::ParamSchema schema = make_camera_param_schema();
+
+    const param::ParamSnapshot exposure = make_snapshot(
+        schema, param::ParamValueMap{{"camera.serial", param::ParamValue("DA123")},
+                                     {"camera.exposure_auto_lower_us", param::ParamValue(9000.0)},
+                                     {"camera.exposure_auto_upper_us", param::ParamValue(100.0)}});
+    EXPECT_FALSE(bind_camera_config(exposure).ok());
+
+    const param::ParamSnapshot gain = make_snapshot(
+        schema, param::ParamValueMap{{"camera.serial", param::ParamValue("DA123")},
+                                     {"camera.gain_auto_lower_db", param::ParamValue(20.0)},
+                                     {"camera.gain_auto_upper_db", param::ParamValue(4.0)}});
+    EXPECT_FALSE(bind_camera_config(gain).ok());
+}
+
 } // namespace
 } // namespace foray::platform::hal
