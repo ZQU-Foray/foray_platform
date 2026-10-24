@@ -314,6 +314,9 @@ Result<void> CameraImpl::read(FrameLease<ImageFrame>& out, time::Duration timeou
 
 ## 6. 配置映射（`CameraConfig` → MVS 节点）
 
+**完整键空间、配置分级与动态参数契约见 [`camera_config.md`](camera_config.md)**，
+本节只列驱动侧的写入细节。
+
 节点名都是 GenICam XML 里的 Name 字符串，**必须容忍型号差异**：写失败即 `open()` 失败
 并带回 `vendor_code`，不做「写了但没生效」的静默降级。
 
@@ -321,24 +324,36 @@ Result<void> CameraImpl::read(FrameLease<ImageFrame>& out, time::Duration timeou
 |---|---|---|---|
 | `width` / `height` | `Width` / `Height` | `SetIntValueEx` | 0 表示不写（沿用相机当前 ROI） |
 | `offset_x` / `offset_y` | `OffsetX` / `OffsetY` | `SetIntValueEx` | 同上 |
+| `binning_*` / `decimation_*` | `BinningHorizontal` / `BinningVertical` / `DecimationHorizontal` / `DecimationVertical` | `SetIntValueEx` | 0 表示不改（设备通常为 1） |
 | `pixel_format` | `PixelFormat` | `SetEnumValue` | 只映射到 8 位 Mono/Bayer；对应 `PixelType_Gvsp_*` 常量（PixelType.h:41/51–54） |
+| `frame_rate_enable` | `AcquisitionFrameRateEnable` | `SetBoolValue` | 只在显式限速时置 true |
 | `frame_rate_hz` | `AcquisitionFrameRateEnable=true` + `AcquisitionFrameRate` | `SetBoolValue` + `SetFloatValue` | 触发模式下已由 binder 拒绝；不要用废弃的 `MV_CC_SetFrameRate` |
-| `exposure_us` | `ExposureAuto=Off` + `ExposureTime` | `SetEnumValue` + `SetFloatValue` | `-1` 表示不写 |
-| `gain_db` | `GainAuto=Off` + `Gain` | `SetEnumValue` + `SetFloatValue` | `-1` 表示不写 |
+| `exposure_us` | `ExposureAuto=Off` + `ExposureTime` | `SetEnumValue` + `SetFloatValue` | 未设置表示不写 |
+| `exposure_auto` | `ExposureAuto` | `SetEnumValue` | 非 `Off` 时设备接管曝光，忽略 `exposure_us` |
+| `exposure_auto_lower_us` / `exposure_auto_upper_us` | `AutoExposureTimeLowerLimit` / `AutoExposureTimeUpperLimit` | `SetFloatValue` | 仅自动曝光时有效 |
+| `gain_db` | `GainAuto=Off` + `Gain` | `SetEnumValue` + `SetFloatValue` | 未设置表示不写 |
+| `gain_auto` | `GainAuto` | `SetEnumValue` | 非 `Off` 时忽略 `gain_db` |
+| `gain_auto_lower_db` / `gain_auto_upper_db` | `AutoGainLowerLimit` / `AutoGainUpperLimit` | `SetFloatValue` | 仅自动增益时有效 |
 | `trigger.mode = kOff` | `TriggerMode=Off` | `SetEnumValue` | `MV_TRIGGER_MODE_OFF = 0`（CameraParams.h:866） |
 | `trigger.mode = kLine0..kLine3` | `TriggerMode=On` + `TriggerSource=Line0..3` | 两次 `SetEnumValue` | 硬件触发 |
-| `trigger.mode = kSoftware` | `TriggerMode=On` + `TriggerSource=Software` | 两次 `SetEnumValue` | **首期只配置不触发**：HAL 的 `Camera` 接口没有 `MV_CC_TriggerSoftwareExecute` 入口，见 §12 |
+| `trigger.mode = kSoftware` | `TriggerMode=On` + `TriggerSource=Software` | 两次 `SetEnumValue` | 触发命令走 `Camera::trigger()` → `MV_CC_TriggerSoftwareExecute` |
+| `trigger.source` | `TriggerSource` | `SetEnumValue` | 显式覆盖由 `mode` 推导的值；binder 已校验一致性 |
 | `trigger.activation` | `TriggerActivation` | `SetEnumValueByString` | 用字符串（`RisingEdge`/`FallingEdge`/`LevelHigh`/`LevelLow`）避开型号枚举差异 |
+| `trigger.debounce_us` | `LineDebouncerTime` | `SetFloatValue` | 已由 binder 映射 |
 | `sdk_node_count` | —（函数） | `MV_CC_SetImageNodeNum` | 必须在 `StartGrabbing` 之前 |
 | `enable_ptp` | `GevIEEE1588` | `SetBoolValue` | 仅 GigE；USB3 配 PTP → `kNotSupported` |
 | `buffer_count` | —（HAL 帧池） | — | 槽数 `max(2, buffer_count)` |
-| `device_to_host_offset_ns` | —（时间换算） | — | 见 §7；**当前 binder 未映射，见 §12** |
-| `exposure_to_host_latency_ns` | —（时间换算） | — | 同上 |
+| `pool_memory_limit_bytes` | —（HAL 帧池） | — | 0 表示不限制；超限时 `kQueueFull` |
+| `packet_size` | `GevSCPSPacketSize` | `SetIntValueEx` | 0 表示不改；非 0 时先用 `MV_CC_GetOptimalPacketSize` 做上限提示 |
+| `inter_packet_delay_us` | `GevSCPD` | `SetIntValueEx` | 包间隔 |
+| `heartbeat_timeout_ms` | `GevHeartbeatTimeout` | `SetIntValueEx` | 心跳超时 |
+| `net_export` | —（枚举匹配） | — | 对应 `MV_GIGE_DEVICE_INFO::nNetExport`，不写节点 |
+| `timestamp_source` | —（时间换算） | — | 见 §7 与 `camera_config.md` §3.7 |
+| `device_to_host_offset_ns` / `exposure_to_host_latency_ns` | —（时间换算） | — | 见 §7 |
 | `frame_id` | —（HAL 元数据） | — | 原样填进 `SensorInfo::frame_id` 与每帧 |
 
-GigE 额外（`transport == kGigE` 时可选）：`GevSCPSPacketSize`（读
-`MV_CC_GetOptimalPacketSize` 的建议值后写入）、`GevSCPD`（包间隔）。
-它们是链路质量调优项，写失败只记 `sdk_errors_`，不阻断 `open()`。
+GigE 链路质量调优项（`packet_size` / `inter_packet_delay_us` / `heartbeat_timeout_ms`）
+写失败只记 `sdk_errors_`，不阻断 `open()`。
 
 ## 7. 时间语义
 
@@ -470,24 +485,29 @@ HIL 验收（沿用 plan.md 口径）：
 - 30 分钟长跑 RSS/FD/SDK 句柄平稳；
 - `ldd` 看 core 测试**不出现** `libMvCameraControl`。
 
-## 12. 落地前必须补的 HAL 缺口
+## 12. HAL 缺口状态
 
-1. **标定偏移没进参数系统**：`CameraConfig` 有 `device_to_host_offset_ns` /
-   `exposure_to_host_latency_ns`（config.hpp:35），但
-   `src/hal/config_binder.cpp` 的 camera schema 没有对应键，
-   `bind_camera_config()` 也没有赋值。海康时间戳方案（§7）完全依赖这两个值，
-   YAML 下发不了就等于没有。
-2. **`camera.trigger_debounce_us` 有键无值**：schema 声明了，binder 未写到
-   `config.trigger.debounce_us`，硬件触发消抖形同虚设。
-3. **软件触发没有出口**：HAL `Camera` 接口没有 `set_trigger()` /
-   `trigger_once()`，软件触发模式下配置了 `TriggerSource=Software` 却无法发触发命令。
-   首期方案：软件触发只配置不触发，并在文档与 `plan.md` 标注；是否扩展 HAL 接口留待
-   上层（ROS 服务）需求明确后再决策，不擅自加破坏性接口。
+已在 2026-10-24 的相机配置改造中补齐（详见 [`camera_config.md`](camera_config.md)）：
+
+1. **标定偏移已进参数系统**：`camera.device_to_host_offset_ns` /
+   `camera.exposure_to_host_latency_ns` 已在 camera schema 与
+   `bind_camera_config()` 中落地，YAML 可以直接下发。
+2. **`camera.trigger_debounce_us` 已映射**到 `config.trigger.debounce_us`。
+3. **软件触发有出口**：`Camera::trigger()`（非纯虚，默认 `kNotSupported`）
+   对应 `MV_CC_TriggerSoftwareExecute`；`camera.trigger_mode = software` 只是配置，
+   真正的触发命令由调用方显式调用。
+
+仍缺（属 HAL 公共 API 变更，需单独决策留痕）：
+
 4. **同步状态不可观测**：`SensorInfo` 没有 `TimestampSync` / tick 频率字段，
    标定调试只能从帧里看。是否加字段属于 HAL 公共 API 变更，需要单独决策留痕。
+5. **设备能力不可查询**：`Camera::supported_keys()` 目前只有默认空实现，
+   驱动落地时需要填充真实键集合，配置期才能对不支持的键做 fail-fast。
+6. **`CameraConfig` 仍无 `host_nic` 绑定**：多网卡主机上无法指定取流网口，
+   依赖 SDK 自身的路由选择（实机 LLA 场景见 §5.1）。
 
-建议的实施顺序：先补 1、2（纯 HAL 参数层改动，可独立测试），再落驱动 M7，
-最后 HIL 验证并补 3、4 的决策。
+建议的实施顺序：先落驱动 M7（消费 §6 全部新键），再做 HIL 验证，
+最后按实际需要决策 4、5、6。
 
 ## 13. 已知限制（预期）
 
@@ -496,7 +516,8 @@ HIL 验收（沿用 plan.md 口径）：
 - 首期不支持 chunk 数据（`nUnparsedChunkNum > 0` 只计数不解析）；
 - 不做 Bayer→RGB、不做像素格式转换（视觉层职责）；
 - 单相机实例一个取流线程；一个进程多相机需要多个 `make_camera()` 实例；
-- 软件触发只配置不触发（见 §12.3）；
+- 软件触发模式下驱动只把相机配成 `TriggerSource=Software`，
+  出图需要调用方主动调用 `Camera::trigger()`；
 - USB reset 不做（见 §9）。
 
 ## 14. 待确认

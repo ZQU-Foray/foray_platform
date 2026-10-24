@@ -83,6 +83,20 @@
 - `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
 - 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
 
+### M6+ 相机配置扩展（2026-10-24，已完成）
+
+- 目标：上游 robots 仓只写 conf，就能覆盖相机的设备选择、几何、采集、触发、传输、
+  缓冲与时间语义；设计见 [docs/camera_config.md](docs/camera_config.md)；
+- `hal/types.hpp` 新增 `AutoMode` / `TimestampSource`；`CameraConfig` 扩到 40 个键，
+  新增 binning/decimation、自动曝光/增益及其上下限、包长/包间隔/心跳、
+  帧池内存上限、`timestamp_source`；`TriggerConfig` 增加显式 `source`；
+- `ParamManager` 增加变更监听：`add_change_listener` / `remove_change_listener`、
+  `ParamChange`、`diff_snapshots` 增量比对、锁外派发、回调异常隔离；
+- `Camera` 新增非纯虚 `apply(CameraTuning)` / `trigger()` / `supported_keys()`，
+  子类不实现也能编译（默认 `kNotSupported`）；
+- 单测：`config_binder_test` +5、`manager_test` +5，全套 163 个用例通过；
+- 未做：驱动侧填充 `supported_keys()`、`SensorInfo` 补同步可观测字段。
+
 ### M7/M8 交付物（Hikvision）
 
 - **方案已定，代码未开工**；设计与取舍见

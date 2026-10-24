@@ -204,6 +204,7 @@ Livox 驱动特性：
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 - [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
 - [Hikvision 驱动方案](docs/driver_hikvision.md)——MVS 接入序列、`MvsApi` 隔离、取流线程、配置映射与时间戳
+- [相机配置](docs/camera_config.md)——`camera.*` 键空间、静态/动态分级与运行时调参契约
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
 - [厂商 SDK 打包调研](docs/sdk_packaging_survey.md)——RM 战队如何打包与调用 MVS 等闭源相机 SDK（横评）
 - [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
