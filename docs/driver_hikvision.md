@@ -411,7 +411,7 @@ MVS 侧可用信息：
 
 - `option(FORAY_BUILD_DRIVER_HIKVISION "..." OFF)`：默认 OFF（与 Livox 一致）。
 - **SDK 来源**：组织私有仓 [`ZQU-Foray/mvs-sdk`](https://github.com/ZQU-Foray/mvs-sdk)
-  （pin commit `f0f35f7`，SDK V4.1.2.2，`MV_CC_GetSDKVersion()` = `0x04010202`），
+  （pin commit `353b584`，SDK V4.1.2.2，`MV_CC_GetSDKVersion()` = `0x04010202`），
   含 `include/` 7 头 + `lib/amd64` + `lib/arm64` 主库 + `find_package(MVS CONFIG)` 包
   + `scripts/{install,install-plugins,make-bundle,verify}.sh`。取得方式（择一）：
   - **元仓一键**：`foray_ws/scripts/import_repos.sh` 拉取 `third_party/mvs_sdk`
