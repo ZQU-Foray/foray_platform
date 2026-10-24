@@ -1,6 +1,6 @@
 # 驱动部署
 
-> 适用：`foray_platform_driver_livox`（已落地）· `foray_platform_driver_hikvision`（待落地）
+> 适用：`foray_platform_driver_livox`（已落地）· `foray_platform_driver_hikvision`（已落地）
 > 平台：Linux（x86_64 / aarch64）· CMake ≥ 3.16 · C++17
 
 ## 1. Livox SDK2
@@ -237,15 +237,39 @@ PTP 同步后 `time_type=1`，HAL 标记 `kPtp`，`base_time` 可直接作为绝
 - NoSync 时不用主机时间伪造 `base_time`；
 - 不在 HAL 内做跨传感器时间对齐。
 
-## 4. Hikvision MVS（待落地）
+## 4. Hikvision MVS
 
-M7/M8 尚未实现。部署时预计需要：
+驱动已落地（`foray_platform_driver_hikvision`，2026-10-24）。
 
-- MVS SDK 安装在 `/opt/MVS`，头文件与 `lib/aarch64`/`lib/64`；
-- udev 规则由 MVS 安装包提供；
-- `FORAY_MVS_ROOT` 指向 SDK 根，`FORAY_BUILD_DRIVER_HIKVISION=ON`；
-- GigE 需巨帧（MTU ≥ 9014）与 `GevSCPSPacketSize`/`GevSCPD` 配置；
-- USB3 硬件触发接 6-pin P7：pin 2 `OPTO_IN+`、pin 5 `OPTO_GND`（5–24 V）。
+SDK 来源是组织私有仓 [`ZQU-Foray/mvs-sdk`](https://github.com/ZQU-Foray/mvs-sdk)
+（SDK V4.8.0.3，`MV_CC_GetSDKVersion()` = `0x04080003`，**只提供 x86-64 主库**）：
+
+```bash
+# 1. 元仓拉取 + 安装到私有前缀（不使用分支，按 commit pin）
+foray_ws/scripts/import_repos.sh
+foray_ws/scripts/install_mvs_sdk.sh --package <海康官方包>
+
+# 2. 或在已有 SDK 的机器上直接指向 /opt/MVS
+cmake -S . -B build -DFORAY_BUILD_DRIVER_HIKVISION=ON -DFORAY_MVS_ROOT=/opt/MVS
+```
+
+要点：
+
+- **主库只有 x86-64**：`lib/amd64/libMvCameraControl.so`；arm64 机器不支持，
+  `find_package(MVS)` 会直接 `FATAL_ERROR`；
+- **传输层插件不入库**：`libMvUsb3vTL.so` / `libMVGigEVisionSDK.so` 等必须由
+  `scripts/install-plugins.sh --package <海康官方包> --prefix <p>` 补齐，
+  缺失时表现为**枚举正常但打不开设备 / 取不到帧**（`MV_E_LOAD_LIBRARY`）；
+- udev 规则与客户端工具只来自官方安装包；`/opt/MVS` 之外的前缀需要自己保证
+  `libMvCameraControl.so` 与插件在同一目录（驱动按短名 `dlopen`）；
+- GigE：巨帧 MTU ≥ 9014；`camera.packet_size = 0` 时驱动调
+  `MV_CC_GetOptimalPacketSize` 自动取值，也可用 `camera.inter_packet_delay_us`
+  显式给 `GevSCPD`；
+- **主机双地址会导致同一相机被枚举两次**（实测 `169.254.114.1/16` 与
+  `192.168.1.51/24` 并存时 `nDeviceNum=2`）：驱动按 serial 去重，不必手动删地址；
+- USB3 硬件触发接 6-pin P7：pin 2 `OPTO_IN+`、pin 5 `OPTO_GND`（5–24 V）；
+- 验证：`FORAY_HIKVISION_BUILD_TOOLS=ON` 后跑
+  `foray_hikvision_dump <serial> --frames 200`，看「收/交付/丢弃/超时/SDK 错误」。
 
 ## 5. 部署检查清单
 
@@ -257,3 +281,11 @@ M7/M8 尚未实现。部署时预计需要：
 - [ ] PPS 电平/极性正确，共地
 - [ ] 驱动 `ctest` 全绿（无 SDK 环境用 stub）
 - [ ] 30 分钟长跑：RSS/FD/句柄平稳，`packets_dropped` 可解释
+
+Hikvision：
+
+- [ ] `foray_hikvision_dump <serial> --frames 200` 丢包/超时/SDK 错误均为 0
+- [ ] `ldd` 看 core 测试不出现 `libMvCameraControl`（mock 分支隔离生效）
+- [ ] 曝光/增益下发后帧内回报与给定值一致（`--exposure-us` / `--gain-db`）
+- [ ] 软触发模式逐帧出图（`--trigger-software`）
+- [ ] 拔插恢复：异常回调 → `kError` → `recover()` 能重新取流

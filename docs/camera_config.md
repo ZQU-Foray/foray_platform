@@ -277,11 +277,19 @@ foray-platform camera-tune --key camera.exposure_us --value 2500
 §7 的时间语义三条路径由 `camera.timestamp_source` 显式选择，`auto` 保留原来的
 优先级推导。两者不冲突：§7 描述**算法**，本文描述**开关**。
 
-## 7. 待落地清单
+## 7. 落地清单（已完成，2026-10-24）
 
-- [ ] `hal/config.hpp`：`CameraConfig` 新增字段、`CameraTuning`、`TimestampSource`
-- [ ] `Camera` 接口：`apply()` 与 `supported_keys()`
-- [ ] `config_binder.cpp`：40 个键的 schema 与赋值 + 交叉校验
-- [ ] `param/manager`：`add_change_listener` / `remove_change_listener`
-- [ ] `foray_platform_driver_hikvision`：MVS 节点映射与 `apply` 实现
-- [ ] `docs/driver_hikvision.md` §6 改为指向本文
+- [x] `hal/config.hpp`：`CameraConfig` 新增字段、`CameraTuning`、`TimestampSource`
+- [x] `Camera` 接口：`apply()` 与 `supported_keys()`
+- [x] `config_binder.cpp`：40 个键的 schema 与赋值 + 交叉校验
+- [x] `param/manager`：`add_change_listener` / `remove_change_listener`
+- [x] `foray_platform_driver_hikvision`：MVS 节点映射与 `apply` 实现
+- [x] `docs/driver_hikvision.md` §6 改为指向本文
+
+驱动侧的实际消费情况（节点名、`0` 值语义、`apply()` 的内层空值含义）见
+[`driver_hikvision.md`](driver_hikvision.md) §6 与 §13；两处需要注意的实机约束：
+
+- `width`/`height` 为 `0` 表示「保留设备当前分辨率」，驱动**不会下发**（裸写 0 会被
+  MVS 判成 `MV_E_GC_RANGE`）；
+- `exposure_us`/`gain_db` 帧内回报可能为 0（未开 chunk），驱动退回读回的节点值，
+  所以 `ImageFrame::exposure_time_us` 是「设备当前配置」而非逐帧真值。

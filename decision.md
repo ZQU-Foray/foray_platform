@@ -502,6 +502,8 @@ Rejected:
 
 ## 2026-10-23 海康 MVS 驱动接入与封装方案
 
+> 已在 2026-10-24 落地，实施细节见本文末条「2026-10-24」。
+
 Background:
 - M7/M8（`foray_platform_driver_hikvision`）尚未开工，但 HAL 已落地、Livox 驱动已给出
   可复用的「SDK 隔离 + core/backend 拆分」范式；需要先定方案再动手，避免重演
