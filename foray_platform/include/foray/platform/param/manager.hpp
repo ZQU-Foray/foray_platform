@@ -1,13 +1,18 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "foray/platform/param/snapshot.hpp"
 #include "foray/platform/param/source.hpp"
 #include "foray/platform/param/store.hpp"
+#include "foray/platform/param/value.hpp"
 
 namespace foray::platform::param {
 
@@ -61,13 +66,53 @@ class ParamManager {
 
     bool initialized() const noexcept;
 
+    /// @brief 变更监听器句柄；0 表示无效。
+    using ListenerId = std::uint64_t;
+
+    /// @brief 单个参数的一次变更记录。
+    struct ParamChange {
+        std::string name;
+        ParamValue old_value;
+        ParamValue new_value;
+    };
+
+    /**
+     * @brief 变更监听器。
+     *
+     * 在 `load_initial()` / `reload()` 成功且值确实变化的返回前，于**调用方线程**
+     * 同步执行；只包含真正变化的键。监听器抛出的异常会被捕获并跳过该监听器，
+     * 不影响 `load_initial()` / `reload()` 的结果。
+     *
+     * 监听器内**不得**再次调用 `load_initial()` / `reload()`（会死锁）。
+     */
+    using ParamChangeListener = std::function<void(const std::vector<ParamChange>&)>;
+
+    /**
+     * @brief 注册变更监听器。
+     * @return 句柄，用于 `remove_change_listener()`。
+     */
+    ListenerId add_change_listener(ParamChangeListener listener);
+
+    /**
+     * @brief 注销变更监听器。
+     * @return 存在并移除返回 `true`。
+     */
+    bool remove_change_listener(ListenerId id);
+
   private:
     ParamResult load_and_apply(ParamUpdateOrigin origin);
+
+    /// @brief 在锁外通知所有监听器。
+    void notify_listeners(const std::vector<ParamChange>& changes);
 
     ParamStore store_;
     std::vector<std::shared_ptr<ParamSource>> sources_;
     mutable std::mutex reload_mutex_;
     std::atomic<bool> initialized_{false};
+
+    std::map<ListenerId, ParamChangeListener> listeners_;
+    std::mutex listener_mutex_;
+    ListenerId next_listener_id_ = 1;
 };
 
 } // namespace foray::platform::param
