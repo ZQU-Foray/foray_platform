@@ -195,8 +195,30 @@ if(FORAY_HIKVISION_BUILD_TOOLS)
             "FORAY_BUILD_DRIVER_HIKVISION=ON")
     endif()
 
-    add_executable(foray_hikvision_dump tools/camera_dump.cpp)
+    add_executable(foray_hikvision_dump tools/camera_dump.cpp tools/viewer.cpp)
     target_link_libraries(foray_hikvision_dump PRIVATE foray_platform_driver_hikvision)
+
+    # --view 的实时预览依赖 SDL2，但它是可选的：找不到就只少了这个功能，
+    # 工具其余部分照常可用（viewer.cpp 里走 FORAY_HIKVISION_HAVE_SDL2=0 的退化实现）。
+    find_package(SDL2 QUIET)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(foray_hikvision_dump PRIVATE SDL2::SDL2)
+    elseif(SDL2_FOUND AND SDL2_INCLUDE_DIRS AND SDL2_LIBRARIES)
+        # 部分发行版只提供变量，不给 IMPORTED target。
+        target_include_directories(foray_hikvision_dump PRIVATE ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(foray_hikvision_dump PRIVATE ${SDL2_LIBRARIES})
+    endif()
+
+    if(TARGET SDL2::SDL2 OR (SDL2_FOUND AND SDL2_LIBRARIES))
+        set(FORAY_HIKVISION_HAVE_SDL2 1)
+        message(STATUS "SDL2 已找到：foray_hikvision_dump 支持 --view 实时预览")
+    else()
+        set(FORAY_HIKVISION_HAVE_SDL2 0)
+        message(STATUS "SDL2 未找到：foray_hikvision_dump 不带 --view 实时预览")
+    endif()
+    target_compile_definitions(foray_hikvision_dump
+        PRIVATE FORAY_HIKVISION_HAVE_SDL2=${FORAY_HIKVISION_HAVE_SDL2})
+
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(foray_hikvision_dump PRIVATE -Wall -Wextra -Wpedantic)
     endif()

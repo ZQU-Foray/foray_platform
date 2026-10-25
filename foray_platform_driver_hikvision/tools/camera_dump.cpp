@@ -9,10 +9,13 @@
 #include "foray/platform/driver/hikvision/camera.hpp"
 #include "foray/platform/hal/camera.hpp"
 #include "foray/platform/hal/frame_lease.hpp"
+#include "foray/platform/result/error.hpp"
 #include "foray/platform/time/duration.hpp"
+#include "viewer.hpp"
 
 namespace {
 
+using foray::platform::ErrorCode;
 using foray::platform::hal::Camera;
 using foray::platform::hal::CameraConfig;
 using foray::platform::hal::FrameLease;
@@ -27,6 +30,8 @@ void print_usage(const char* program) {
                  "  --ip <地址>         按 IP 选择（GigE）\n"
                  "  --frames <n>        取多少帧后退出（默认 5，0 = 不限，Ctrl-C 退出）\n"
                  "  --timeout-ms <n>    单帧读超时毫秒（默认 1000，必须 > 0）\n"
+                 "  --view              开一个 SDL2 窗口实时显示（需构建期找到 SDL2；\n"
+                 "                      窗口里按 ESC 或 q 关闭；关闭即停止取流）\n"
                  "  --width <n>         期望宽度（默认用设备当前值）\n"
                  "  --height <n>        期望高度（默认用设备当前值）\n"
                  "  --exposure-us <f>   曝光时间\n"
@@ -80,6 +85,10 @@ const char* sync_name(foray::platform::hal::TimestampSync sync) {
     return foray::platform::hal::to_string(sync);
 }
 
+/// @brief 预览窗口标题的刷新间隔（纳秒）。0.5 s 取「人眼能读清」与「不每帧调
+/// SDL_SetWindowTitle」的折中；126 Hz 下每帧刷标题会白白吃掉几个百分点的 CPU。
+constexpr std::int64_t kTitleIntervalNs = 500'000'000;
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -96,7 +105,9 @@ int main(int argc, char** argv) {
 
     std::uint64_t frames_wanted = 5;
     std::int64_t timeout_ms = 1000;
+    bool timeout_ms_explicit = false;
     bool software_trigger = false;
+    bool view_requested = false;
 
     for (int index = 2; index < argc; ++index) {
         const std::string option = argv[index];
@@ -149,6 +160,11 @@ int main(int argc, char** argv) {
                 return 2;
             }
             timeout_ms = static_cast<std::int64_t>(value);
+            timeout_ms_explicit = true;
+            continue;
+        }
+        if (option == "--view") {
+            view_requested = true;
             continue;
         }
         if (option == "--width" || option == "--height") {
@@ -195,6 +211,12 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (view_requested && !timeout_ms_explicit) {
+        // 预览模式下把读超时压到 100 ms：循环同时负责刷窗口与响应关窗，
+        // 1 s 的阻塞读会让「按下关窗到程序退出」明显卡顿。
+        timeout_ms = 100;
+    }
+
     auto created = foray::platform::driver::hikvision::make_camera(config);
     if (!created.ok()) {
         std::fprintf(stderr, "构造相机失败: %s\n", created.error().message.c_str());
@@ -225,10 +247,33 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // 预览窗口要拿到第一帧才知道真实分辨率（config.width/height 为 0 时由设备决定），
+    // 所以窗口延迟到首帧再建。
+    foray::platform::driver::hikvision::tools::Viewer viewer;
+    bool viewer_ready = false;
+    bool viewer_failed = false;
+
+    const auto steady_now_ns = []() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
     std::uint64_t received = 0;
+    std::uint64_t read_timeouts = 0;
     std::int64_t first_stamp_ns = 0;
     std::int64_t last_stamp_ns = 0;
+    std::int64_t title_stamp_ns = 0;
+    std::uint64_t title_frames = 0;
+    const std::int64_t loop_begin_ns = steady_now_ns();
+
     while (frames_wanted == 0U || received < frames_wanted) {
+        // 先抽事件再读帧：这样即使相机暂时不出图，关窗也能立刻生效。
+        if (viewer_ready && !viewer.pump()) {
+            std::printf("预览窗口已关闭，停止取流\n");
+            break;
+        }
+
         FrameLease<ImageFrame> lease;
         if (software_trigger) {
             // 软触发模式下每次取帧前主动触发一次，否则相机不会出图。
@@ -243,6 +288,12 @@ int main(int argc, char** argv) {
         }
         status = camera->read(lease, Duration::from_milliseconds(timeout_ms));
         if (!status.ok()) {
+            // 超时/无数据是正常节拍（软触发尤其），继续等下一帧；只有真故障才退出。
+            if (status.error().code == ErrorCode::kTimeout ||
+                status.error().code == ErrorCode::kNoData) {
+                ++read_timeouts;
+                continue;
+            }
             std::fprintf(stderr, "读帧失败: %s (code=0x%08X)\n", status.error().message.c_str(),
                          static_cast<unsigned>(status.error().vendor_code));
             (void)camera->stop();
@@ -259,12 +310,56 @@ int main(int argc, char** argv) {
             first_stamp_ns = frame.stamp.nanoseconds_since_epoch();
         }
         last_stamp_ns = frame.stamp.nanoseconds_since_epoch();
-        std::printf("帧 %llu: %ux%u stride=%u seq=%llu dev_no=%u 曝光=%.1fus 增益=%.2fdB "
-                    "sync=%s 丢包=%u\n",
-                    static_cast<unsigned long long>(received), frame.width, frame.height, frame.stride,
-                    static_cast<unsigned long long>(frame.sequence), frame.device_frame_number,
-                    static_cast<double>(frame.exposure_time_us), static_cast<double>(frame.gain_db),
-                    sync_name(frame.sync), frame.lost_packets);
+
+        if (view_requested && !viewer_ready && !viewer_failed) {
+            auto opened = viewer.open(static_cast<int>(frame.width), static_cast<int>(frame.height));
+            if (!opened.ok()) {
+                // 打不开窗口不该让整次取流作废（远程 SSH、无显示设备的现场很常见）。
+                std::fprintf(stderr, "警告: 无法打开预览窗口: %s\n继续以文本模式运行\n",
+                             opened.error().message.c_str());
+                viewer_failed = true;
+            } else {
+                viewer_ready = true;
+            }
+        }
+        if (viewer_ready) {
+            // 帧尺寸变了（ROI/binning）时 show() 返回 false，这里只丢显示不影响取流。
+            (void)viewer.show(frame);
+        }
+
+        // 预览模式下每帧一行会把终端刷爆，也拖慢取流节奏。
+        const bool verbose = !viewer_ready || received <= 3U || (received % 60U) == 0U;
+        if (verbose) {
+            std::printf(
+                "帧 %llu: %ux%u stride=%u seq=%llu dev_no=%u 曝光=%.1fus 增益=%.2fdB "
+                "sync=%s 丢包=%u\n",
+                static_cast<unsigned long long>(received), frame.width, frame.height, frame.stride,
+                static_cast<unsigned long long>(frame.sequence), frame.device_frame_number,
+                static_cast<double>(frame.exposure_time_us), static_cast<double>(frame.gain_db),
+                sync_name(frame.sync), frame.lost_packets);
+        }
+
+        if (viewer_ready) {
+            const std::int64_t now_ns = steady_now_ns();
+            if (title_stamp_ns == 0) {
+                title_stamp_ns = now_ns;
+                title_frames = received;
+            } else if (now_ns - title_stamp_ns >= kTitleIntervalNs) {
+                const double fps = static_cast<double>(received - title_frames) * 1e9 /
+                                   static_cast<double>(now_ns - title_stamp_ns);
+                const auto live = camera->stats();
+                char title[192] = {};
+                std::snprintf(
+                    title, sizeof(title),
+                    "foray_hikvision_dump | %ux%u | %.1f Hz | 帧 %llu | 丢弃 %llu | 超时 %llu",
+                    frame.width, frame.height, fps, static_cast<unsigned long long>(received),
+                    static_cast<unsigned long long>(live.frames_dropped),
+                    static_cast<unsigned long long>(live.timeouts));
+                viewer.set_title(title);
+                title_stamp_ns = now_ns;
+                title_frames = received;
+            }
+        }
     }
 
     if (received > 1U && first_stamp_ns != 0 && last_stamp_ns > first_stamp_ns) {
@@ -272,6 +367,18 @@ int main(int argc, char** argv) {
         std::printf("平均帧率: %.2f Hz（%llu 帧 / %.3f s）\n",
                     static_cast<double>(received - 1U) / span_s,
                     static_cast<unsigned long long>(received - 1U), span_s);
+    } else if (received > 1U) {
+        // 没有可用设备时间戳（sync = kNoSync）时退回主机侧节拍，现场估算吞吐够用。
+        const double span_s = static_cast<double>(steady_now_ns() - loop_begin_ns) / 1e9;
+        if (span_s > 0.0) {
+            std::printf("平均帧率（主机节拍）: %.2f Hz（%llu 帧 / %.3f s）\n",
+                        static_cast<double>(received) / span_s,
+                        static_cast<unsigned long long>(received), span_s);
+        }
+    }
+    if (read_timeouts != 0U) {
+        std::printf("读超时 %llu 次（已跳过，不影响统计里的交付帧数）\n",
+                    static_cast<unsigned long long>(read_timeouts));
     }
 
     (void)camera->stop();
