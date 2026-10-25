@@ -5,6 +5,17 @@
 - [x] 定义时间与时钟抽象（含 `use_sim_time` 语义）
 - [x] 搭参数系统骨架（schema + 校验 + 热加载）
 - [x] 定义 HAL 抽象接口（传感器 / 执行器 / 总线 / 设备生命周期）
+- [x] 建立 USB CDC 设备打开/关闭的最小构建与无硬件测试骨架
+- [x] 验证 USB CDC 二进制字节收发与 CRC-32/ISO-HDLC 的离线测试向量
+- [x] 候选 RoboLink 零槽保活帧离线组帧与独立黄金字节测试（不代表电控端已支持）
+- [x] 候选 RoboLink 字节流解析器：半帧、连帧、垃圾前缀、坏头及 CRC 失败恢复的离线测试
+- [x] 候选 RoboLink 零槽/单槽/多槽帧与八类消息载荷的编解码/校验，完成 USB 字节通道离线串接
+- [x] 按已合入 `foray_interfaces` 的 RoboLink v0.2 候选稿更新云台角 rad 与姿态反馈的离线测试向量
+- [x] 离线实现主机握手、心跳、状态回读、500 ms 超时及设备重开状态机
+- [ ] 验证发送调度的频率/延迟，并与 MCU 固件进行只读/禁能联调
+- [ ] 完成 v0.2 与电控固件逐字节对账及失联动作验收；在此之前不发送控制指令到硬件
+- [ ] 与自瞄组补齐云台系目标到世界系目标角的转换和图像—IMU 时间对齐，再开放真实云台控制
+- [ ] USB CDC 设备参数配置与错误恢复策略细化（波特率/超时/重试）
 - [ ] 接一个真实驱动跑通「一个传感器 → 一个话题」
   - Livox 驱动代码与 mock 测试已完成；真实 SDK 构建 + HIL 已通过
 - [ ] 实现急停硬路径（独立实时线程 + 超时定时器）
@@ -133,16 +144,34 @@
 - **待 HIL**：实机雷达当前断线（`enp0s31f6` 无载波），helper 已能经 NM
   创建 `foray-enp0s31f6-slave` 并给出"没有载波"警告。
 
+### M12 交付物（USB CDC 与候选 RoboLink）
+
+- `foray_platform/include/foray/platform/link/`（命名空间 `foray::platform::link`）
+  - `usb_cdc_port.hpp`：设备路径与 fd 生命周期、原始字节读写；
+  - `robolink_crc.hpp`：CRC-32/ISO-HDLC；
+  - `robolink_frame.hpp`：零槽保活组帧；`robolink_frame_parser.hpp`：字节流切帧与重同步；
+  - `robolink_codec.hpp`：零槽/单槽/多槽帧 + 八类载荷的显式小端编解码；
+  - `robolink_byte_channel.hpp`：设备↔帧层桥接（单帧待发、部分写入）；
+  - `robolink_host_link.hpp`：主机握手/心跳/回读/超时/重开状态机；
+- 同包新增 `foray_platform_link` 库目标（EXPORT_NAME `link`），并入
+  `foray_platform_tests`；
+- 单测：`foray_platform/test/link/` 21 个用例（设备生命周期、CRC 向量、组帧黄金字节、
+  半帧/连帧/坏头恢复、载荷往返、字节通道、主机链路）；
+- **本地无硬件验证**：`cmake -S foray_platform -B build/platform -DCMAKE_BUILD_TYPE=Debug`
+  + `cmake --build` + `ctest` → 192/192 通过（含 link 21 个）；
+- 文档：[docs/robolink_protocol_review.md](docs/robolink_protocol_review.md)；
+- **未完成**：与 MCU 固件逐字节对账、发送频率/延迟验收、实机联调、失联动作验收。
+
 ## 当前 Agent State
 
-M11_NET_BOOTSTRAP_DONE（实机 HIL 待雷达恢复连接）
+M11_NET_BOOTSTRAP_DONE + HOST_LINK_V02_OFFLINE_TESTED（实机 HIL 待雷达恢复连接；RoboLink 仅离线验收，未接真机）
 
 ## Before Snapshot
 
-commit hash:   51d451b
-branch:        feat/l1-foundation
-modified files: 新增 FindLivoxSDK2、core/backend 拆分、HAS_SDK、SDK ON CI；
-  跨仓 foray_ws：`.repos` pin、scripts、文档
+commit hash:   af2dd95（origin/dev，合并上游后）
+branch:        feat/usb-cdc
+modified files: 新增 `foray/platform/link/` 头文件、`src/link/` 源码、`test/link/` 测试；
+  CMakeLists 新增 link 库目标与 install；README/tree/plan/decision 增补 link 章节
 risk level:    L1
 
 ## 模糊点与待确认项
@@ -180,4 +209,6 @@ Commit: （首次提交）
 - [x] 常规 / ASan+UBSan / TSan 三套构建全绿（平台 151 + 驱动 36）
 - [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `foray_lidar_up`）
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
+- [x] link 模块 21 个用例并入平台测试目标（本地 Debug 构建 192/192 通过）
+- [ ] RoboLink v0.2 与 MCU 固件逐字节对账 + 实机联调（对账前不向硬件发控制指令）
 - [ ] CI 绿灯

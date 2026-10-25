@@ -20,7 +20,8 @@
 │   ├── hal_architecture.md      HAL 生命周期、帧池与零拷贝
 │   ├── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
 │   ├── driver_livox.md          Livox 驱动：运行时、解析、组帧与时间语义
-│   └── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
+│   ├── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
+│   └── robolink_protocol_review.md  候选 RoboLink 线协议对账（待电控逐字节确认）
 ├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
 │   ├── CMakeLists.txt
 │   ├── package.xml              build_type=cmake，供 colcon 识别
@@ -32,13 +33,15 @@
 │   │   ├── result/              ErrorCode · Error · Result<T>
 │   │   ├── container/           有界 SPSC 队列（header-only）
 │   │   ├── config/              document · resolver · snapshot · exporter · tool
-│   │   └── hal/                 Device · Camera · Lidar · 帧 · FrameLease/FramePool · ConfigBinder
+│   │   ├── hal/                 Device · Camera · Lidar · 帧 · FrameLease/FramePool · ConfigBinder
+│   │   └── link/                UsbCdcPort · CRC · 组帧 · 帧解析 · 消息编解码 · HostLink
 │   ├── src/
 │   │   ├── time/clock.cpp
 │   │   ├── param/               实现、内部校验与 YAML 工具
 │   │   ├── result/error.cpp
 │   │   ├── config/              resolver · exporter · tool
 │   │   ├── net/                 probe · process · NM/netlink 后端 · plan/ensure_link
+│   │   ├── link/                USB CDC 设备 · CRC-32 · 帧/字节流 · 编解码 · 主机链路
 │   │   └── hal/config_binder.cpp
 │   └── test/
 │       ├── time/                时钟单测
@@ -46,7 +49,8 @@
 │       ├── result/              错误码 / Result 单测
 │       ├── container/           SPSC 队列单测
 │       ├── config/              分层 / include / env / 导出单测
-│       └── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
+│       ├── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
+│       └── link/                设备生命周期 · CRC · 组帧 · 解析 · 编解码 · 链路单测
 │   ├── tools/foray_net_helper.cpp  特权网络自举 helper（pkexec）
 │   └── deploy/                 polkit 动作 + 免密规则
 ├── foray_platform_driver_livox/ Livox SDK2 驱动（纯 CMake，不依赖 ROS）
@@ -77,7 +81,8 @@
         └── ci.yml               复制自组织 CI 模板
 ```
 
-> L2 HAL（同包 `hal` target）已落地；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
+> L2 HAL（同包 `hal` target）已落地；`link` target 的 USB CDC 与候选 RoboLink 编解码、主机链路
+> 已离线全绿（尚无装配程序，未与 MCU 固件联调）；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
 > Hikvision 驱动与 ROS 适配层按计划加入。
 
 ## 目录职责
