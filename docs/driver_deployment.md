@@ -56,7 +56,7 @@ cmake --install ~/.cache/foray-build/livox-sdk2
 
 ```bash
 # 开发机真实后端
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \

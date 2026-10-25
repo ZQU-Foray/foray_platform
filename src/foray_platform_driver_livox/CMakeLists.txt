@@ -23,7 +23,7 @@ set(FORAY_LIVOX_SDK_PROVIDER "SYSTEM" CACHE STRING
     "Livox SDK2 provider: SYSTEM (system paths/CMAKE_PREFIX_PATH) or PREBUILT (LIVOX_SDK2_ROOT)")
 set_property(CACHE FORAY_LIVOX_SDK_PROVIDER PROPERTY STRINGS SYSTEM PREBUILT)
 
-find_package(foray_platform REQUIRED)
+find_package(foray_platform_core REQUIRED)
 find_package(Threads REQUIRED)
 
 set(FORAY_LIVOX_CORE_SOURCES
@@ -192,7 +192,7 @@ if(FORAY_LIVOX_BUILD_TOOLS)
             "FORAY_BUILD_DRIVER_LIVOX=ON")
     endif()
 
-    add_executable(foray_livox_dump tools/livox_dump.cpp)
+    add_executable(foray_livox_dump apps/livox_dump.cpp)
     target_link_libraries(foray_livox_dump PRIVATE foray_platform_driver_livox)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(foray_livox_dump PRIVATE -Wall -Wextra -Wpedantic)
@@ -200,7 +200,7 @@ if(FORAY_LIVOX_BUILD_TOOLS)
     install(TARGETS foray_livox_dump RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     # 参数注入工具：读回 / 下发 / 再读回校验，避免手工改 JSON 后失联。
-    add_executable(foray_livox_config tools/livox_config.cpp)
+    add_executable(foray_livox_config apps/livox_config.cpp)
     target_include_directories(foray_livox_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(foray_livox_config PRIVATE foray_platform_driver_livox)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -209,7 +209,7 @@ if(FORAY_LIVOX_BUILD_TOOLS)
     install(TARGETS foray_livox_config RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     # 一键编排：网络自举（可经 pkexec）+ 驱动启动 + 读帧健康确认。
-    add_executable(foray_lidar_up tools/lidar_up.cpp)
+    add_executable(foray_lidar_up apps/lidar_up.cpp)
     # 安装后的 helper 不在 PATH 里，编译期给一个默认绝对路径。
     target_compile_definitions(foray_lidar_up PRIVATE
         FORAY_NET_HELPER_DEFAULT="${CMAKE_INSTALL_FULL_LIBEXECDIR}/foray_platform/foray-net-helper")

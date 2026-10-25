@@ -57,7 +57,7 @@ NetworkManager 凭据、巨帧 MTU、设备 IP 与主机端口。手工 `ip link
 
 ```bash
 # 只做自举（幂等，可反复跑）
-pkexec /usr/libexec/foray_platform/foray-net-helper \
+pkexec /usr/libexec/foray_platform_core/foray-net-helper \
     --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51
 
 # 雷达：链路已就绪则跳过自举，否则自动经 pkexec 调 helper

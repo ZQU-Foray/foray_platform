@@ -10,7 +10,7 @@ L1 平台基础 + L2 下行 HAL
 
 ## 快速开始
 
-> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform` 包，**不依赖 ROS**）。
+> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform_core` 包，**不依赖 ROS**）。
 > L2 HAL 与 ROS 适配层正在按计划落地。
 
 ### 仅构建核心库（无需 ROS）
@@ -18,7 +18,7 @@ L1 平台基础 + L2 下行 HAL
 依赖：CMake ≥ 3.16、C++17 编译器、yaml-cpp；测试另需 GTest。
 
 ```bash
-cmake -S foray_platform -B ~/.cache/foray-platform-build/platform \
+cmake -S src/foray_platform_core -B ~/.cache/foray-platform-build/platform \
       -DCMAKE_BUILD_TYPE=Release
 cmake --build ~/.cache/foray-platform-build/platform -j"$(nproc)"
 ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
@@ -32,7 +32,7 @@ ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
 驱动包默认 **不依赖 SDK**，用 stub 构建并跑 mock 测试：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=OFF
 cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
@@ -43,7 +43,7 @@ ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
 `foray_ws/scripts/build_livox_sdk2.sh` 完成），再打开开关：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \
       -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
@@ -91,7 +91,7 @@ colcon test --event-handlers console_direct+
 ## 接口
 
 > 本仓是 **C++ 库**，不是 ROS 节点。这里的「接口」指**公共 C++ API**；
-> `foray_platform` 的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
+> `foray_platform_core` 包的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
 > `foray_interfaces`（X2）定义；后续 ROS 适配层落地后再在本节补充话题/参数清单。
 >
 > 未冻结的接口只描述**契约方向**，不承诺具体签名。

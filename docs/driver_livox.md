@@ -6,7 +6,7 @@
 ## 1. 包结构
 
 ```text
-foray_platform_driver_livox/
+src/foray_platform_driver_livox/
 ├── cmake/
 │   ├── FindLivoxSDK2.cmake     暴露 LivoxSDK2::shared
 │   └── foray_platform_driver_livoxConfig.cmake.in
@@ -226,7 +226,7 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 构建时打开（需要 SDK ON）：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
   -DFORAY_BUILD_DRIVER_LIVOX=ON \

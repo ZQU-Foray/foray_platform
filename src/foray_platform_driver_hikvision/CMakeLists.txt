@@ -23,7 +23,7 @@ set(FORAY_MVS_PROVIDER "SYSTEM" CACHE STRING
     "MVS provider: SYSTEM (system paths/CMAKE_PREFIX_PATH, e.g. /opt/MVS) or PREBUILT (FORAY_MVS_ROOT)")
 set_property(CACHE FORAY_MVS_PROVIDER PROPERTY STRINGS SYSTEM PREBUILT)
 
-find_package(foray_platform REQUIRED)
+find_package(foray_platform_core REQUIRED)
 find_package(Threads REQUIRED)
 
 set(FORAY_HIKVISION_CORE_SOURCES
@@ -199,7 +199,7 @@ if(FORAY_HIKVISION_BUILD_TOOLS)
             "FORAY_BUILD_DRIVER_HIKVISION=ON")
     endif()
 
-    add_executable(foray_hikvision_dump tools/camera_dump.cpp tools/viewer.cpp)
+    add_executable(foray_hikvision_dump apps/camera_dump.cpp apps/viewer.cpp)
     target_link_libraries(foray_hikvision_dump PRIVATE foray_platform_driver_hikvision)
 
     # --view 的实时预览依赖 SDL2，但它是可选的：找不到就只少了这个功能，
@@ -229,7 +229,7 @@ if(FORAY_HIKVISION_BUILD_TOOLS)
     install(TARGETS foray_hikvision_dump RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     # 一键自举：网络编排（可经 pkexec）+ 相机启动 + 取帧健康确认，与 foray_lidar_up 对齐。
-    add_executable(foray_hikvision_up tools/camera_up.cpp)
+    add_executable(foray_hikvision_up apps/camera_up.cpp)
     target_include_directories(foray_hikvision_up
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     # 安装后的 helper 不在 PATH 里，编译期给一个默认绝对路径。
