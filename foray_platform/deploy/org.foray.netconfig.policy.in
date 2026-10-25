@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "https://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  雷达网络自举的特权动作：只允许调用安装好的 foray-net-helper，
+  参数白名单由 helper 自己校验，polkit 不传递任意命令。
+-->
+<policyconfig>
+  <vendor>ZQU-Foray</vendor>
+  <vendor_url>https://github.com/ZQU-Foray</vendor_url>
+
+  <action id="org.foray.netconfig.bootstrap">
+    <description>Configure the lidar bridge</description>
+    <description xml:lang="zh_CN">配置雷达专用网桥</description>
+    <message>Authentication is required to attach the lidar NIC to the bridge</message>
+    <message xml:lang="zh_CN">需要授权把物理网口挂入雷达网桥并配置主机 IP</message>
+    <icon_name>network-wired</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">@FORAY_HELPER_PATH@</annotate>
+  </action>
+</policyconfig>

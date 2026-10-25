@@ -2,48 +2,96 @@
 
 ## 目录结构
 
-```
+```text
 .
-├── README.md                本仓定位、接口、上下游
-├── AGENTS.md                AI 协作规范
-├── plan.md                  开发计划与进度
-├── decision.md              关键工程决策日志
-├── tree.md                  本文件
-├── CODEOWNERS               Review 自动分派
-├── .foray-layer             所属层与依赖边界（CI 校验）
+├── README.md                    本仓定位、接口、上下游
+├── AGENTS.md                    AI 协作规范
+├── plan.md                      开发计划与进度
+├── decision.md                  关键工程决策日志
+├── tree.md                      本文件
+├── CODEOWNERS                   Review 自动分派
+├── .clang-format                组织 C/C++ 格式配置（CI lint-c 依赖）
+├── .foray-layer                 所属层与依赖边界（CI 校验）
 ├── .gitignore
-├── package.xml             ROS 2 包元数据
-├── CMakeLists.txt           USB CDC 与候选 RoboLink 编解码的无硬件单元测试构建
-├── include/foray_platform/
-│   ├── usb_cdc_port.hpp     USB CDC 设备接口
-│   ├── robolink_crc.hpp     候选协议所用的 CRC-32 算法
-│   ├── robolink_frame.hpp   候选保活帧组帧接口
-│   ├── robolink_frame_parser.hpp 候选字节流帧解析接口
-│   ├── robolink_codec.hpp   零槽/单槽/多槽帧及八类消息载荷接口（含云台姿态）
-│   ├── robolink_byte_channel.hpp USB 与帧解析桥接接口
-│   └── robolink_host_link.hpp 主机握手、状态/姿态回读与断线状态机接口
-├── src/
-│   ├── usb_cdc_port.cpp     USB CDC 设备打开、关闭与原始字节读写
-│   ├── robolink_crc.cpp     CRC-32/ISO-HDLC 实现
-│   ├── robolink_frame.cpp   候选保活帧练习（已离线测试，未作为正式协议启用）
-│   ├── robolink_frame_parser.cpp 候选帧解析实现
-│   ├── robolink_codec.cpp   零槽/单槽/多槽帧与消息载荷编解码
-│   ├── robolink_byte_channel.cpp USB 收发与帧解析桥接
-│   └── robolink_host_link.cpp 主机非阻塞运行逻辑
-├── test/
-│   ├── test_usb_cdc_port.cpp 无硬件设备生命周期与字节收发测试
-│   ├── test_robolink_crc.cpp CRC 标准校验值测试
-│   ├── test_robolink_frame.cpp 候选保活帧独立黄金字节测试
-│   ├── test_robolink_frame_parser.cpp 半帧、连帧、重同步与 CRC 失败测试
-│   ├── test_robolink_codec.cpp 消息字段与槽位往返测试
-│   ├── test_robolink_byte_channel.cpp 无硬件 USB 字节桥接测试
-│   └── test_robolink_host_link.cpp 伪终端握手、回读、超时测试
+├── docs/
+│   ├── time_and_clock.md        时钟域与 use_sim_time 语义
+│   ├── parameter_system.md      参数 schema / 校验 / 热加载设计
+│   ├── config_stack.md          分层配置、include、env 与导出
+│   ├── hal_architecture.md      HAL 生命周期、帧池与零拷贝
+│   ├── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
+│   ├── driver_livox.md          Livox 驱动：运行时、解析、组帧与时间语义
+│   ├── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
+│   └── robolink_protocol_review.md  候选 RoboLink 线协议对账（待电控逐字节确认）
+├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
+│   ├── CMakeLists.txt
+│   ├── package.xml              build_type=cmake，供 colcon 识别
+│   ├── cmake/
+│   │   └── foray_platformConfig.cmake.in
+│   ├── include/foray/platform/
+│   │   ├── time/                Duration · Timestamp · Clock
+│   │   ├── param/               schema · snapshot · store · source · manager
+│   │   ├── result/              ErrorCode · Error · Result<T>
+│   │   ├── container/           有界 SPSC 队列（header-only）
+│   │   ├── config/              document · resolver · snapshot · exporter · tool
+│   │   ├── hal/                 Device · Camera · Lidar · 帧 · FrameLease/FramePool · ConfigBinder
+│   │   └── link/                UsbCdcPort · CRC · 组帧 · 帧解析 · 消息编解码 · HostLink
+│   ├── src/
+│   │   ├── time/clock.cpp
+│   │   ├── param/               实现、内部校验与 YAML 工具
+│   │   ├── result/error.cpp
+│   │   ├── config/              resolver · exporter · tool
+│   │   ├── net/                 probe · process · NM/netlink 后端 · plan/ensure_link
+│   │   ├── link/                USB CDC 设备 · CRC-32 · 帧/字节流 · 编解码 · 主机链路
+│   │   └── hal/config_binder.cpp
+│   └── test/
+│       ├── time/                时钟单测
+│       ├── param/               参数系统单测
+│       ├── result/              错误码 / Result 单测
+│       ├── container/           SPSC 队列单测
+│       ├── config/              分层 / include / env / 导出单测
+│       ├── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
+│       └── link/                设备生命周期 · CRC · 组帧 · 解析 · 编解码 · 链路单测
+│   ├── tools/foray_net_helper.cpp  特权网络自举 helper（pkexec）
+│   └── deploy/                 polkit 动作 + 免密规则
+├── foray_platform_driver_livox/ Livox SDK2 驱动（纯 CMake，不依赖 ROS）
+│   ├── CMakeLists.txt
+│   ├── package.xml
+│   ├── cmake/
+│   │   ├── FindLivoxSDK2.cmake  暴露 LivoxSDK2::shared
+│   │   └── foray_platform_driver_livoxConfig.cmake.in
+│   ├── include/foray/platform/driver/livox/
+│   │   └── lidar.hpp            公共工厂（无 SDK 类型）
+│   ├── src/livox/
+│   │   ├── lidar.cpp/.hpp       生命周期、配置、解析线程
+│   │   ├── livox_control.cpp/.hpp  控制面重试 + 读回校验
+│   │   ├── lidar_public_factory.cpp  公共 make_lidar（后端对象）
+│   │   ├── livox_runtime.cpp/.hpp  进程级 SDK 单例与 handle 路由
+│   │   ├── livox_api.hpp        SDK 函数表抽象
+│   │   ├── livox_api_real.cpp   SDK ON 时的真实实现
+│   │   ├── livox_api_stub.cpp   SDK OFF 时的 stub
+│   │   ├── packet_parser.cpp/.hpp  36 字节头与点/IMU 解析
+│   │   ├── frame_assembler.cpp/.hpp  组帧与逐点时间
+│   │   └── config_json.cpp/.hpp  Livox 网络 JSON
+│   ├── tools/
+│   │   ├── livox_dump.cpp       点云导出（PCD/PPM/流式 stdout）与自检
+│   │   └── livox_config.cpp     雷达参数读回/下发/再校验
+│   └── test/livox/              mock 单测 + backend 能力测试
 └── .github/
     └── workflows/
-        └── ci.yml           复制自组织 CI 模板
+        └── ci.yml               复制自组织 CI 模板
 ```
 
-> USB CDC、候选 RoboLink 编解码和主机连接状态机可独立构建与测试；工作区尚无装配程序，实际硬件联调未完成。
+> L2 HAL（同包 `hal` target）已落地；`link` target 的 USB CDC 与候选 RoboLink 编解码、主机链路
+> 已离线全绿（尚无装配程序，未与 MCU 固件联调）；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
+> Hikvision 驱动与 ROS 适配层按计划加入。
+
+## 目录职责
+
+| 路径 | 职责 | 依赖约束 |
+|---|---|---|
+| `foray_platform/` | L1 core：时间/时钟、参数系统、错误码；L2 hal 按计划加入 | **不得依赖 ROS 2、不得依赖任何业务仓** |
+| `docs/` | 设计文档 | — |
+| `.foray-layer` | 声明 `layer: L1`、`depends_on_layers: [X2]` | CI 校验依赖方向 |
 
 ## 记录约束
 

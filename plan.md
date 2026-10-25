@@ -2,50 +2,213 @@
 
 ## 任务列表
 
-- [ ] 定义时间与时钟抽象（含 `use_sim_time` 语义）
-- [ ] 搭参数系统骨架（schema + 校验 + 热加载）
-- [ ] 定义 HAL 抽象接口（传感器 / 执行器 / 总线 / 设备生命周期）
-- [x] 建立 USB CDC 设备打开/关闭的最小构建和无硬件测试骨架
+- [x] 定义时间与时钟抽象（含 `use_sim_time` 语义）
+- [x] 搭参数系统骨架（schema + 校验 + 热加载）
+- [x] 定义 HAL 抽象接口（传感器 / 执行器 / 总线 / 设备生命周期）
+- [x] 建立 USB CDC 设备打开/关闭的最小构建与无硬件测试骨架
 - [x] 验证 USB CDC 二进制字节收发与 CRC-32/ISO-HDLC 的离线测试向量
 - [x] 候选 RoboLink 零槽保活帧离线组帧与独立黄金字节测试（不代表电控端已支持）
 - [x] 候选 RoboLink 字节流解析器：半帧、连帧、垃圾前缀、坏头及 CRC 失败恢复的离线测试
-- [x] 候选 RoboLink 零槽、单槽与多槽帧及七类消息载荷的编解码/校验，完成 USB 字节通道离线串接
+- [x] 候选 RoboLink 零槽/单槽/多槽帧与八类消息载荷的编解码/校验，完成 USB 字节通道离线串接
 - [x] 按已合入 `foray_interfaces` 的 RoboLink v0.2 候选稿更新云台角 rad 与姿态反馈的离线测试向量
 - [x] 离线实现主机握手、心跳、状态回读、500 ms 超时及设备重开状态机
 - [ ] 验证发送调度的频率/延迟，并与 MCU 固件进行只读/禁能联调
 - [ ] 完成 v0.2 与电控固件逐字节对账及失联动作验收；在此之前不发送控制指令到硬件
 - [ ] 与自瞄组补齐云台系目标到世界系目标角的转换和图像—IMU 时间对齐，再开放真实云台控制
-- [ ] 完成 USB CDC 设备读写、错误处理与设备参数配置
+- [ ] USB CDC 设备参数配置与错误恢复策略细化（波特率/超时/重试）
 - [ ] 接一个真实驱动跑通「一个传感器 → 一个话题」
+  - Livox 驱动代码与 mock 测试已完成；真实 SDK 构建 + HIL 已通过
 - [ ] 实现急停硬路径（独立实时线程 + 超时定时器）
+
+### 任务 1 交付物
+
+- `foray_platform/include/foray/platform/time/`
+  - `Duration` / `Timestamp` 强类型；
+  - `Clock` 接口 + `SystemClock` / `SteadyClock` / `ManualClock`；
+  - 三个时钟域与 `use_sim_time` 就绪/跳变语义；
+- 设计说明：[docs/time_and_clock.md](docs/time_and_clock.md)；
+- 单测：`foray_platform/test/time/clock_test.cpp`。
+
+### 任务 2 交付物
+
+- `foray_platform/include/foray/platform/param/`
+  - 类型化 schema、声明校验、范围/枚举校验；
+  - 不可变快照 + 原子替换的存储；
+  - 多来源分层（对应 `shared.yaml` + `<robot>.yaml`）；
+  - YAML 文件来源（严格未知键、按 schema 解析类型）；
+  - 初始加载 / 热加载门面，整批原子生效；
+- 设计说明：[docs/parameter_system.md](docs/parameter_system.md)；
+- 单测：`foray_platform/test/param/`。
+
+### M1 交付物（HAL 前置）
+
+- 包合并：`foray_platform_core/` → `foray_platform/`；
+  `foray_platform_core` 与后续 `foray_platform_hal` 为同包两个 target；
+- `foray_platform/include/foray/platform/result/`
+  - `ErrorCode` / `Error` / `Result<T>` / `Result<void>`；
+  - 驱动原始错误码保留在 `Error::vendor_code`；
+- 单测：`foray_platform/test/result/result_test.cpp`；
+- 决策记录：`decision.md` 的包合并、配置栈归属、通用错误类型条目。
+
+### M2 交付物
+
+- `foray_platform/include/foray/platform/container/spsc_queue.hpp`
+  - 有界、无锁、单生产者/单消费者；
+  - 容量向上取 2 的幂；满时 `try_push` 返回 false 并累计 `dropped()`；
+  - `T` 要求可默认构造、移动构造/赋值不抛异常；
+- 单测：`foray_platform/test/container/spsc_queue_test.cpp`；
+- TSan 并发用例通过。
+
+### M3 交付物
+
+- `foray_platform/include/foray/platform/config/`
+  - `ConfigDocument` / `ConfigLayer`：分层与可选层；
+  - `ConfigResolver`：YAML 加载、顶层 `include`、`${ENV}` 替换、
+    `FORAY_<PARAM>` 覆盖、来源追踪；
+  - `ConfigSnapshot`：已校验值 + provenance；
+  - `ConfigExporter`：dump / Markdown schema / JSON Schema；
+  - `ConfigTool`：validate/dump/schema 门面（可执行文件待 HAL schema 落地）；
+- 复用 `param` 的 `ParamSchema` / `ParamValue` / `ParamStore` 做校验与宽化；
+- 设计说明：[docs/config_stack.md](docs/config_stack.md)；
+- 单测：`foray_platform/test/config/`；ASan/UBSan 通过。
+
+### M4/M5 交付物
+
+- `foray_platform/include/foray/platform/hal/`
+  - `Device` / `Camera` / `Lidar` 生命周期与读取接口；
+  - `ImageFrame` / `PointCloudFrame` / `ImuSample` / `TimestampSync`；
+  - `CameraConfig` / `LidarConfig` / `DeviceSelector` / `TriggerConfig`；
+  - `FrameLease`（move-only）+ `FramePool`（最新帧邮箱、固定槽位、无锁读写）；
+- 同包新增 `foray_platform_hal` interface target，导出 `foray_platform::hal`；
+- 单测：类型/默认值、发布/获取、替换丢帧、槽位耗尽、租约晚于池销毁、
+  单写单读并发；ASan/UBSan/TSan 通过；
+- 设计说明：[docs/hal_architecture.md](docs/hal_architecture.md)。
+
+### M6 交付物
+
+- `foray_platform/include/foray/platform/hal/config_binder.hpp`
+  - `make_camera_param_schema()` / `make_lidar_param_schema()`；
+  - `bind_camera_config()` / `bind_lidar_config()`；
+  - 跨字段约束：transport 与 serial/ip、trigger 与 frame_rate、像素格式支持；
+- `foray_platform_hal` 从 interface 转为普通库；
+- `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
+- 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
+
+### M9/M10 交付物（Livox）
+
+- `foray_platform_driver_livox/`（纯 CMake，不依赖 ROS）
+  - 公共工厂 `driver::livox::make_lidar(const hal::LidarConfig&)`，公共头无 SDK 类型；
+  - `livox_api.hpp` 函数表抽象 + stub/真实实现，`FORAY_BUILD_DRIVER_LIVOX` 开关；
+  - `LivoxRuntime`：进程级 SDK 引用计数、handle 路由、sink 墓地；
+  - 原始包环（`SpscQueue<PacketSlot>`）+ 解析线程 + `FramePool` 组帧；
+  - 包解析：0x01 高精度 / 0x02 低精度 / 0x03 球坐标 / 0x00 IMU；
+  - 时间映射：`time_type` 0/1/2/3/4/未知 → `TimestampSync`；
+  - Mid-360s（dev_type 35）：JSON 同时生成 `MID360` + `Mid360s`；
+    SDK handle（`s_addr`）与按 IP 预绑定不一致时按 serial/IP 回退；
+  - 非重复扫描时间切帧：`frame_duration_ms`（默认 100 ms）；
+  - IMU 加速度 g → m/s²（`9.80665`）；
+  - JSON 生成（0600）、本机 IP 校验、默认单播、多雷达、退避恢复；
+  - SDK 依赖：`FindLivoxSDK2.cmake` + `LivoxSDK2::shared`；
+    `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`；
+  - core/backend 目标拆分：mock 测试只链 core，任何开关下不依赖 SDK；
+  - `FORAY_DRIVER_LIVOX_HAS_SDK=0/1` 作为已安装产物能力导出；
+  - `foray_livox_dump`：PCD + 俯视 PPM 导出、`--self-test` 自检；
+    `--stream` 逐点流式写 stdout（每帧 flush、统计走 stderr、
+    `--frames 0` 持续输出、EPIPE 视为正常结束）；
+- 文档：[docs/driver_livox.md](docs/driver_livox.md)、
+  [docs/driver_deployment.md](docs/driver_deployment.md)；
+- 单测：30 个用例（29 core + 1 backend），mock 覆盖生命周期、路由、恢复、解析、组帧；
+  常规 / ASan+UBSan / TSan 全绿；安装后下游 `find_package` 通过；
+- 跨仓：`foray_ws/.repos` pin Livox-SDK2 v1.3.1，新增依赖/构建/环境脚本；
+- **已完成**：真实 SDK2 构建、ON 编译/链接、下游消费；实机 HIL：
+  Mid-360s `192.168.1.195`，2–3 帧 × 20064 点、IMU、PCD/PPM；
+- **未完成**：双回波 `0x11`。
+
+### M11 交付物（雷达网络自举与参数注入）
+
+- `foray_platform/include/foray/platform/net/`
+  - `net_types.hpp`：`Ipv4` / `InterfaceInfo` / `Topology` / 只读 `probe_topology()`；
+  - `process.hpp`：`ProcessRunner` 抽象（不经过 shell）；
+  - `backend.hpp` + `nm_backend.hpp` + `netlink_backend.hpp`：NM 优先、netlink 回退；
+  - `setup.hpp`：`plan_link()` 纯规划、`ensure_link()` 执行 + 逆序回滚、`select_backend()`；
+- `foray_platform/tools/foray_net_helper.cpp`：libexec helper，参数白名单，
+  polkit 动作 `org.foray.netconfig.bootstrap` 只放行该程序；
+- 驱动控制面：`LivoxApi` 增 set_lidar_ip / set_install_attitude / set_pps_sync_mode /
+  set_host_port_cfg / set_rmc_sync_time / query_internal_info；`LivoxControl`
+  统一重试与写后读回；`foray_livox_config` 工具；
+- `foray_lidar_up`：链路就绪检测 + pkexec 调 helper + 驱动启动 + 读帧健康确认
+  （退出码 2/3/4/5/6 区分驱动、网络与无帧）；
+- 文档：[docs/net_bootstrap.md](docs/net_bootstrap.md)，
+  `docs/driver_deployment.md` §2.2 改为 helper 自举；
+- 单测：平台 150 个用例（net 新增 32 个）、驱动 36 个（控制面 6 个）全绿；
+- **待 HIL**：实机雷达当前断线（`enp0s31f6` 无载波），helper 已能经 NM
+  创建 `foray-enp0s31f6-slave` 并给出"没有载波"警告。
+
+### M12 交付物（USB CDC 与候选 RoboLink）
+
+- `foray_platform/include/foray/platform/link/`（命名空间 `foray::platform::link`）
+  - `usb_cdc_port.hpp`：设备路径与 fd 生命周期、原始字节读写；
+  - `robolink_crc.hpp`：CRC-32/ISO-HDLC；
+  - `robolink_frame.hpp`：零槽保活组帧；`robolink_frame_parser.hpp`：字节流切帧与重同步；
+  - `robolink_codec.hpp`：零槽/单槽/多槽帧 + 八类载荷的显式小端编解码；
+  - `robolink_byte_channel.hpp`：设备↔帧层桥接（单帧待发、部分写入）；
+  - `robolink_host_link.hpp`：主机握手/心跳/回读/超时/重开状态机；
+- 同包新增 `foray_platform_link` 库目标（EXPORT_NAME `link`），并入
+  `foray_platform_tests`；
+- 单测：`foray_platform/test/link/` 21 个用例（设备生命周期、CRC 向量、组帧黄金字节、
+  半帧/连帧/坏头恢复、载荷往返、字节通道、主机链路）；
+- **本地无硬件验证**：`cmake -S foray_platform -B build/platform -DCMAKE_BUILD_TYPE=Debug`
+  + `cmake --build` + `ctest` → 192/192 通过（含 link 21 个）；
+- 文档：[docs/robolink_protocol_review.md](docs/robolink_protocol_review.md)；
+- **未完成**：与 MCU 固件逐字节对账、发送频率/延迟验收、实机联调、失联动作验收。
 
 ## 当前 Agent State
 
-HOST_LINK_V02_OFFLINE_TESTED：按已合入的 v0.2 候选协议补齐 0x30 接收及能力位；工作区尚无装配根，未接入真实电控。
+M11_NET_BOOTSTRAP_DONE + HOST_LINK_V02_OFFLINE_TESTED（实机 HIL 待雷达恢复连接；RoboLink 仅离线验收，未接真机）
 
 ## Before Snapshot
 
-commit hash:   d113af5
+commit hash:   af2dd95（origin/dev，合并上游后）
 branch:        feat/usb-cdc
-modified files: README.md、decision.md、plan.md、tree.md，以及未跟踪的构建文件、头文件、源码和测试
+modified files: 新增 `foray/platform/link/` 头文件、`src/link/` 源码、`test/link/` 测试；
+  CMakeLists 新增 link 库目标与 install；README/tree/plan/decision 增补 link 章节
 risk level:    L1
 
 ## 模糊点与待确认项
 
 - 本仓接口尚未冻结，任务清单为**方向性**的，落地顺序以 `foray_docs/algorithm_structure.md` §9 演进阶段为准
 - 依赖的自研仓尚未建齐，跨仓任务需等对方 `README.md` 明确接口后再启动
+- **ROS 适配层尚未开始**：`use_sim_time` 的映射已在文档中冻结，但 `/clock` 订阅与 `rclcpp` 适配留到后续单元
+- **`package.xml` 的 `license` 字段为 `TODO`**，需组织确认许可证后填写
+- 参数系统暂不支持序列参数与变更回调；配置栈的数组/动态列表支持按需扩展
+- 配置解析栈按计划在 core 内扩展（`config/`）；机器人 YAML 归 `foray_robots`
+- HAL 目标的驱动与 ROS 适配尚未开始，按 M2–M12 里程碑推进
+- Livox SDK2 开发机默认装到 `~/.cache/foray-platform-prefix/livox-sdk2`；
+  实机镜像固定 `/opt/foray/livox-sdk2`；版本由 `foray_ws/.repos` pin
+- 实机雷达为 **Livox Mid-360s**（dev_type 35，SN `ARMCP7D0030195`），
+  IP `192.168.1.195`，主机 `br-lidar` `192.168.1.51`；HIL 已通过
 
 ## Vector Backend Status
 
 Backend: Markdown
 Status:  ready
 Environment: 仓库内 Markdown 文档（无外部向量后端）
-Index: 本仓 `README.md` / `tree.md` / `decision.md`
+Index: 本仓 `README.md` / `tree.md` / `decision.md` / `docs/**`
 Initialization: 2026-02-19
 Commit: （首次提交）
 
 ## Acceptance Criteria
 
-- [ ] 本仓能独立 `colcon build`（无代码时跳过）
+- [x] 每个新增模块带独立可执行测试（平台 151 个 + Livox 驱动 36 个用例）
+- [x] 核心库可脱离 ROS 独立构建、测试、安装，并可被下游 `find_package` 消费
+- [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
+- [x] Livox 真实 SDK2 构建、ON 编译/链接与下游消费
+- [x] Livox 实机读取：Mid-360s 点云 + IMU + PCD/PPM
+- [x] 网络自举：probe/plan/rollback/nmcli 命令行断言覆盖，`foray-net-helper`
+      经 pkexec 实机生效（NM profile `foray-enp0s31f6-slave` 持久）
+- [x] 常规 / ASan+UBSan / TSan 三套构建全绿（平台 151 + 驱动 36）
+- [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `foray_lidar_up`）
+- [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
+- [x] link 模块 21 个用例并入平台测试目标（本地 Debug 构建 192/192 通过）
+- [ ] RoboLink v0.2 与 MCU 固件逐字节对账 + 实机联调（对账前不向硬件发控制指令）
 - [ ] CI 绿灯
-- [ ] 每个新增模块带独立可执行测试
