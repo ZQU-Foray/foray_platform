@@ -35,8 +35,10 @@ void print_usage(const char* program) {
                  "                      窗口里按 ESC 或 q 关闭；关闭即停止取流）\n"
                  "  --width <n>         期望宽度（默认用设备当前值）\n"
                  "  --height <n>        期望高度（默认用设备当前值）\n"
-                 "  --exposure-us <f>   曝光时间\n"
-                 "  --gain-db <f>       增益\n"
+                 "  --exposure-us <f>   曝光时间（微秒）\n"
+                 "  --exposure-auto     让设备自动曝光（Continuous），忽略 --exposure-us\n"
+                 "  --gain-db <f>       增益（dB）\n"
+                 "  --gain-auto         让设备自动增益（Continuous），忽略 --gain-db\n"
                  "  --trigger-software  软触发模式：配置后每帧先 trigger() 再读\n",
                  program);
 }
@@ -205,6 +207,15 @@ int main(int argc, char** argv) {
                 return 2;
             }
             config.exposure_us = value;
+            // 手动值落地时把自动曝光关掉，否则设备按自动曲线覆盖手动值，
+            // 现场会看到「设了曝光但画面不变」。
+            config.exposure_auto = foray::platform::hal::AutoMode::kOff;
+            continue;
+        }
+        if (option == "--exposure-auto") {
+            config.exposure_auto = foray::platform::hal::AutoMode::kContinuous;
+            // 自动模式下不再下发手动曝光，清掉避免两套值互相矛盾。
+            config.exposure_us.reset();
             continue;
         }
         if (option == "--gain-db") {
@@ -215,6 +226,12 @@ int main(int argc, char** argv) {
                 return 2;
             }
             config.gain_db = value;
+            config.gain_auto = foray::platform::hal::AutoMode::kOff;
+            continue;
+        }
+        if (option == "--gain-auto") {
+            config.gain_auto = foray::platform::hal::AutoMode::kContinuous;
+            config.gain_db.reset();
             continue;
         }
         if (option == "--trigger-software") {
