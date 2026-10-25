@@ -18,7 +18,7 @@ struct RoboLinkSlot {
 };
 
 // 视觉联调所需的控制快照  字段顺序和长度来自 组织候选协议
-// 云台目标角按 deg  其余角速度 rad/s
+// 云台目标角按 rad，角速度按 rad/s。
 struct ControlSnapshot {
     std::uint32_t control_seq = 0;   // 指令编号
     std::uint8_t source = 2;        // 命令来源
@@ -27,9 +27,9 @@ struct ControlSnapshot {
     float chassis_vx = 0;
     float chassis_vy = 0;
     float chassis_wz = 0;
-    // 希望云台达到的目标角度  (不是当前的反馈角度！！)
-    float gimbal_yaw_deg = 0;
-    float gimbal_pitch_deg = 0;
+    // v0.2 §4.7：世界系目标角（rad），不是云台系相对角，也不是当前反馈角。
+    float gimbal_yaw_rad = 0;
+    float gimbal_pitch_rad = 0;
 
     float gimbal_yaw_rate = 0;
     float gimbal_pitch_rate = 0;
@@ -61,6 +61,15 @@ struct SystemStatus {
     std::uint8_t link_state = 0;
     std::uint32_t fault_flags = 0;
     std::optional<SystemDiagnostics> diagnostics;
+};
+
+// RoboLink v0.2 §4.8：云台系到世界系的姿态反馈，四元数按 w,x,y,z 排列。
+struct GimbalAttitude {
+    std::uint32_t sample_time_us = 0;
+    std::array<float, 4> quaternion_wxyz{};
+    std::array<float, 3> gyro_rad_s{};
+    std::uint8_t imu_state = 0;
+    bool attitude_valid = false;
 };
 
 // 双端建链消息    字段布局来自候选协议
@@ -117,6 +126,9 @@ std::vector<std::uint8_t> encode_control_snapshot_payload(
 
 // 只接受候选协议的 28 B 核心或 52 B（核心 + 诊断）载荷。
 std::optional<SystemStatus> decode_system_status_payload(
+    const std::uint8_t* data, std::size_t size);
+// 只解码 36 B 载荷；attitude_valid 为 false 时不得使用四元数与角速度。
+std::optional<GimbalAttitude> decode_gimbal_attitude_payload(
     const std::uint8_t* data, std::size_t size);
 
 // 握手、确认、错误与心跳载荷只处理字段，不处理发送周期和重连状态机。

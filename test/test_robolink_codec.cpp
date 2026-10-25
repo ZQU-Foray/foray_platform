@@ -12,8 +12,8 @@ TEST(RoboLinkCodec, ControlSnapshotUsesDocumentedOffsets)
     foray_platform::ControlSnapshot control;
     control.control_seq = 0x12345678;
     control.flags = 0x0002;  // 仅云台使能。
-    control.gimbal_yaw_deg = 90.0f;
-    control.gimbal_pitch_deg = -10.0f;
+    control.gimbal_yaw_rad = 1.5f;
+    control.gimbal_pitch_rad = -0.25f;
     control.validity_hint_ms = 80;  // 按候选规范钳制为 50 ms。
 
     const auto payload = foray_platform::encode_control_snapshot_payload(control);
@@ -21,7 +21,7 @@ TEST(RoboLinkCodec, ControlSnapshotUsesDocumentedOffsets)
     EXPECT_EQ((std::vector<std::uint8_t>{payload.begin(), payload.begin() + 8}),
               (std::vector<std::uint8_t>{0x78, 0x56, 0x34, 0x12, 0x02, 0x02, 0x02, 0x00}));
     EXPECT_EQ((std::vector<std::uint8_t>{payload.begin() + 20, payload.begin() + 24}),
-              (std::vector<std::uint8_t>{0x00, 0x00, 0xB4, 0x42}));  // 90.0f 的小端表示。
+              (std::vector<std::uint8_t>{0x00, 0x00, 0xC0, 0x3F}));  // 1.5f rad 的小端表示。
     EXPECT_EQ(payload[44], 50u);
     EXPECT_EQ(payload[45], 0u);
     EXPECT_EQ(payload[46], 0u);
@@ -32,7 +32,7 @@ TEST(RoboLinkCodec, SingleSlotFrameRoundTripsThroughStreamParser)
 {
     foray_platform::ControlSnapshot control;
     control.flags = 0x0002;
-    control.gimbal_yaw_deg = 30.0f;
+    control.gimbal_yaw_rad = 0.5f;
     foray_platform::RoboLinkSlot slot;
     slot.type = 0x20;
     slot.flags = 0x02;  // LATEST_ONLY。
@@ -82,7 +82,7 @@ TEST(RoboLinkCodec, VisualControlConvenienceBuildsSeventyTwoByteFrame)
     foray_platform::ControlSnapshot control;
     control.control_seq = 9;
     control.flags = 0x0002;
-    control.gimbal_yaw_deg = 45.0f;
+    control.gimbal_yaw_rad = 0.75f;
     const auto frame = foray_platform::make_control_snapshot_frame(1, 1000, 2, control);
     ASSERT_EQ(frame.size(), 72u);
     const auto slot = foray_platform::decode_single_slot_frame(frame);
@@ -132,6 +132,54 @@ TEST(RoboLinkCodec, DecodesCoreSystemStatus)
     EXPECT_EQ(status->last_applied_control_seq, 7u);
     EXPECT_EQ(status->control_msg_age_ms, 12u);
     EXPECT_FALSE(status->diagnostics.has_value());
+
+    payload[6] = 99;  // v0.2 §4.6：未知安全状态按控制失联处理。
+    const auto unknown_safety = foray_platform::decode_system_status_payload(
+        payload.data(), payload.size());
+    ASSERT_TRUE(unknown_safety.has_value());
+    EXPECT_EQ(unknown_safety->safety_state, 2u);
+}
+
+TEST(RoboLinkCodec, DecodesGimbalAttitudeInWxyzOrder)
+{
+    // RoboLink v0.2 §4.8：采样时刻 0x12345678，单位四元数 (0.5,0.5,-0.5,0.5)。
+    std::array<std::uint8_t, 36> payload{};
+    payload[0] = 0x78;
+    payload[1] = 0x56;
+    payload[2] = 0x34;
+    payload[3] = 0x12;
+    payload[7] = 0x3F;   // q_w = 0.5f。
+    payload[11] = 0x3F;  // q_x = 0.5f。
+    payload[15] = 0xBF;  // q_y = -0.5f；能检出 y/z 顺序颠倒。
+    payload[19] = 0x3F;  // q_z = 0.5f。
+    payload[32] = 1;   // IMU READY。
+    payload[33] = 1;   // ATTITUDE_VALID。
+
+    foray_platform::RoboLinkSlot slot;
+    slot.type = 0x30;
+    slot.payload.assign(payload.begin(), payload.end());
+    const auto frame = foray_platform::encode_single_slot_frame(1, 100, slot);
+    EXPECT_EQ(frame.size(), 60u);  // 14 B 帧头 + 6 B 槽位头 + 36 B 载荷 + 4 B CRC。
+    const auto decoded = foray_platform::decode_single_slot_frame(frame);
+    ASSERT_TRUE(decoded.has_value());
+    const auto attitude = foray_platform::decode_gimbal_attitude_payload(
+        decoded->payload.data(), decoded->payload.size());
+    ASSERT_TRUE(attitude.has_value());
+    EXPECT_EQ(attitude->sample_time_us, 0x12345678u);
+    EXPECT_EQ(attitude->quaternion_wxyz[0], 0.5f);
+    EXPECT_EQ(attitude->quaternion_wxyz[1], 0.5f);
+    EXPECT_EQ(attitude->quaternion_wxyz[2], -0.5f);
+    EXPECT_EQ(attitude->quaternion_wxyz[3], 0.5f);
+    EXPECT_EQ(attitude->imu_state, 1u);
+    EXPECT_TRUE(attitude->attitude_valid);
+
+    payload[33] = 0;
+    const auto unavailable = foray_platform::decode_gimbal_attitude_payload(
+        payload.data(), payload.size());
+    ASSERT_TRUE(unavailable.has_value());
+    EXPECT_FALSE(unavailable->attitude_valid);
+    EXPECT_FALSE(foray_platform::decode_gimbal_attitude_payload(
+        payload.data(), payload.size() - 1).has_value());
 }
 
 TEST(RoboLinkCodec, DecodesSystemStatusFromWholeFrame)

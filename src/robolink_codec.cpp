@@ -20,6 +20,7 @@ constexpr std::size_t kMaxPayloadSize = 486;
 constexpr std::size_t kControlPayloadSize = 48;
 constexpr std::size_t kStatusCoreSize = 28;
 constexpr std::size_t kStatusFullSize = 52;
+constexpr std::size_t kGimbalAttitudeSize = 36;
 constexpr std::size_t kHelloSize = 26;
 constexpr std::size_t kHelloAckSize = 8;
 constexpr std::size_t kAckSize = 7;
@@ -72,6 +73,14 @@ std::uint32_t read_u32(const std::uint8_t* p)
            (static_cast<std::uint32_t>(p[3]) << 24);
 }
 
+float read_f32(const std::uint8_t* p)
+{
+    const std::uint32_t bits = read_u32(p);
+    float value = 0;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
 std::uint64_t read_u64(const std::uint8_t* p)
 {
     std::uint64_t value = 0;
@@ -91,6 +100,7 @@ bool payload_size_matches(std::uint8_t type, std::size_t size)
     case 0x05: return size >= 2 && size <= 2 + kMaxErrorDetailSize;
     case 0x10: return size == kStatusCoreSize || size == kStatusFullSize;
     case 0x20: return size == kControlPayloadSize;
+    case 0x30: return size == kGimbalAttitudeSize;
     default: return false;
     }
 }
@@ -106,6 +116,7 @@ bool class_flags_match(std::uint8_t type, std::uint8_t flags)
     case 0x05: return flags == 0x04;  // ERROR：事件
     case 0x10: return flags == 0x00;  // SYSTEM_STATUS：状态
     case 0x20: return flags == 0x02;  // CONTROL_SNAPSHOT：最新值
+    case 0x30: return flags == 0x00;  // GIMBAL_ATTITUDE：状态
     default: return false;
     }
 }
@@ -237,8 +248,8 @@ std::vector<std::uint8_t> encode_control_snapshot_payload(
     append_f32(out, snapshot.chassis_vx);
     append_f32(out, snapshot.chassis_vy);
     append_f32(out, snapshot.chassis_wz);
-    append_f32(out, snapshot.gimbal_yaw_deg);
-    append_f32(out, snapshot.gimbal_pitch_deg);
+    append_f32(out, snapshot.gimbal_yaw_rad);
+    append_f32(out, snapshot.gimbal_pitch_rad);
     append_f32(out, snapshot.gimbal_yaw_rate);
     append_f32(out, snapshot.gimbal_pitch_rate);
     append_f32(out, snapshot.friction_rads);
@@ -260,7 +271,7 @@ std::optional<SystemStatus> decode_system_status_payload(
     out.uptime_ms = read_u32(data);
     out.mode = data[4] <= 7 ? data[4] : 6;  // 未知模式按 SAFETY。
     out.control_source = data[5] <= 4 ? data[5] : 0;  // 未知来源按 NONE。
-    out.safety_state = data[6];
+    out.safety_state = data[6] <= 3 ? data[6] : 2;  // v0.2 §4.6：未知值按控制失联。
     out.last_rx_control_seq = read_u32(data + 8);
     out.last_accepted_control_seq = read_u32(data + 12);
     out.last_applied_control_seq = read_u32(data + 16);
@@ -281,6 +292,37 @@ std::optional<SystemStatus> decode_system_status_payload(
         diag.queue_drop = read_u16(data + 44);
         diag.event_queue_depth = data[46];
         out.diagnostics = diag;
+    }
+    return out;
+}
+
+std::optional<GimbalAttitude> decode_gimbal_attitude_payload(
+    const std::uint8_t* data, std::size_t size)
+{
+    if (data == nullptr || size != kGimbalAttitudeSize) return std::nullopt;
+
+    GimbalAttitude out;
+    out.sample_time_us = read_u32(data);
+    for (std::size_t i = 0; i < out.quaternion_wxyz.size(); ++i) {
+        out.quaternion_wxyz[i] = read_f32(data + 4 + 4 * i);
+    }
+    for (std::size_t i = 0; i < out.gyro_rad_s.size(); ++i) {
+        out.gyro_rad_s[i] = read_f32(data + 20 + 4 * i);
+    }
+    // §4.8：未知 IMU 状态按 SETTLING；保留 flag 位和末尾保留字节忽略。
+    out.imu_state = data[32] <= 2 ? data[32] : 0;
+    out.attitude_valid = (data[33] & 0x01u) != 0;
+    if (out.attitude_valid) {
+        float norm_sq = 0;
+        for (const float component : out.quaternion_wxyz) {
+            if (!std::isfinite(component)) return std::nullopt;
+            norm_sq += component * component;
+        }
+        for (const float component : out.gyro_rad_s) {
+            if (!std::isfinite(component)) return std::nullopt;
+        }
+        // 拒绝零向量等明显非法姿态；量化误差由后续姿态消费者处理。
+        if (!std::isfinite(norm_sq) || norm_sq <= 0) return std::nullopt;
     }
     return out;
 }
@@ -408,15 +450,15 @@ std::optional<ErrorMessage> decode_error_payload(const std::uint8_t* data, std::
     out.detail.assign(data + 2, data + size);
     return out;
 }
-
+// 生成完整帧
 std::vector<std::uint8_t> make_control_snapshot_frame(
     std::uint16_t frame_seq, std::uint32_t timestamp_us,
     std::uint16_t message_seq, const ControlSnapshot& snapshot)
 {
     RoboLinkSlot slot;
-    slot.type = 0x20;
+    slot.type = 0x20;    // 声明是控制指令
     slot.flags = 0x02;  // 控制快照属于 LATEST 类。
-    slot.sequence = message_seq;
+    slot.sequence = message_seq;  // 消息编号
     slot.payload = encode_control_snapshot_payload(snapshot);
     return encode_single_slot_frame(frame_seq, timestamp_us, slot);
 }
