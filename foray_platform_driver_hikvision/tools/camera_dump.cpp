@@ -1,4 +1,5 @@
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -89,6 +90,18 @@ const char* sync_name(foray::platform::hal::TimestampSync sync) {
 /// SDL_SetWindowTitle」的折中；126 Hz 下每帧刷标题会白白吃掉几个百分点的 CPU。
 constexpr std::int64_t kTitleIntervalNs = 500'000'000;
 
+/// @brief 收到 SIGINT/SIGTERM 后置位，主循环据此退出并发 stop()/close()。
+///
+/// 必须自己接管：`--view` 下 SDL 默认会装自己的 SIGINT/SIGTERM handler，只往事件
+/// 队列推一个 SDL_QUIT 而不终止进程。取流线程在阻塞等帧时那个事件迟迟不生效，
+/// 实测进程会挂着不退出、相机独占也不释放（下一次 open 报 MV_E_ACCESS_DENIED
+/// 0x80000203）。viewer 侧已用 SDL_HINT_NO_SIGNAL_HANDLERS 关掉 SDL 的接管。
+volatile std::sig_atomic_t g_stop_requested = 0;
+
+extern "C" void handle_stop_signal(int /*signal*/) {
+    g_stop_requested = 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -97,6 +110,9 @@ int main(int argc, char** argv) {
         print_usage(argv[0]);
         return argc < 2 ? 2 : 0;
     }
+
+    std::signal(SIGINT, handle_stop_signal);
+    std::signal(SIGTERM, handle_stop_signal);
 
     // 第一个位置参数按 serial 处理；其它选择条件走选项，逐个替换选择条件，
     // 避免「同时给了 serial 与型号」时被驱动的优先级静默取其一。
@@ -267,7 +283,7 @@ int main(int argc, char** argv) {
     std::uint64_t title_frames = 0;
     const std::int64_t loop_begin_ns = steady_now_ns();
 
-    while (frames_wanted == 0U || received < frames_wanted) {
+    while (g_stop_requested == 0 && (frames_wanted == 0U || received < frames_wanted)) {
         // 先抽事件再读帧：这样即使相机暂时不出图，关窗也能立刻生效。
         if (viewer_ready && !viewer.pump()) {
             std::printf("预览窗口已关闭，停止取流\n");
@@ -375,6 +391,9 @@ int main(int argc, char** argv) {
                         static_cast<double>(received) / span_s,
                         static_cast<unsigned long long>(received), span_s);
         }
+    }
+    if (g_stop_requested != 0) {
+        std::printf("收到中断信号，停止取流并释放设备\n");
     }
     if (read_timeouts != 0U) {
         std::printf("读超时 %llu 次（已跳过，不影响统计里的交付帧数）\n",

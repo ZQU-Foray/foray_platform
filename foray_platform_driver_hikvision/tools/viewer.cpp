@@ -172,6 +172,11 @@ struct Viewer::Impl {
             return Result<void>(make_error(ErrorCode::kInvalidArgument, "预览窗口尺寸必须为正"));
         }
 
+        // 不接管信号：SDL 默认会装 SIGINT/SIGTERM handler，只推一个 SDL_QUIT 事件而
+        // 不终止进程；调用方如果在阻塞取流，进程会挂着不退出、相机独占也释放不掉。
+        // 停止语义留给调用方（foray_hikvision_dump 自己装了 handler）。
+        SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+
         if (SDL_Init(SDL_INIT_VIDEO) != 0) {
             return Result<void>(make_error(
                 ErrorCode::kSdkUnavailable,
