@@ -620,3 +620,43 @@ Alternatives:
 Rejected:
 - 无条件写 `Width`/`Height`：实机验证失败（0x80000102）；
 - 用 `nHostTimeStamp` 做时间基准：MVS 未定义其单位，只能留作诊断。
+
+## 2026-10-25 `--view` 的信号归属与预览亮度排查
+
+Date: 2026-10-25
+
+Context: `foray_hikvision_dump --view` 在 `kill -TERM` 后不退出，进程挂住导致
+MV_CC_OpenDevice 返回 `MV_E_ACCESS_DENIED`（0x80000203）；同时现场反馈预览窗口
+「有画面但很暗」，需要判断是渲染链路丢亮度还是相机曝光不足。
+
+Decision:
+- `tools/viewer.cpp` 在 `SDL_Init` 之前设 `SDL_HINT_NO_SIGNAL_HANDLERS=1`，
+  停止语义交回 `camera_dump.cpp`：自己 `std::signal()` 装 handler、置
+  `volatile std::sig_atomic_t` 标志，主循环据此退出并执行 `stop()` + `close()`；
+- `--view` 的亮度问题按「设备侧参数」处理，新增 `--exposure-auto` / `--gain-auto`
+  让设备跑 `Continuous`，并在两者与 `--exposure-us` / `--gain-db` 之间做互斥清空；
+- 不实现软件端自动提亮（gamma/直方图拉伸）：该窗口用于判断现场视场与对焦，
+  篡改亮度会让曝光调试失去基准。
+
+Reason:
+- SDL 默认的 SIGINT/SIGTERM handler 只推一个 `SDL_QUIT` 事件而不终止进程，
+  阻塞的 `MV_CC_GetImageBuffer` 期间该事件迟迟不生效，于是进程挂着、设备不释放；
+- 2026-10-25 实测同一场景：手动 5000 µs/0 dB 原始帧平均灰度 27，自动曝光收敛
+  7460 µs/9.3 dB 后平均灰度 94，且手动曝光线性生效
+  （1000→4.9、5000→27.4、20000→104.4、60000→193.2，均丢弃 8 帧后取样），
+  说明偏暗是曝光不足，`convert_bayer8()` 与 `SDL_RenderCopy` 没有亮度损失
+  （合成棋盘帧逐点核对为 (40,40,40)/(220,220,220)）；
+- 自动模式下同时下发手动值会让设备按自动曲线忽略手动值，现场表现为
+  「设了曝光但画面不变」，所以解析时互斥清空。
+
+Alternatives:
+- 让 SDL 处理信号、在 `pump()` 里读 `SDL_QUIT`：仍要求事件循环被调用，
+  首帧到达前或阻塞读期间无法响应；
+- 用 `SDL_QUIT` 之外的自定义事件：同样绕不开阻塞取流；
+- 预览窗口自动拉伸亮度：掩盖真实曝光，调试时反而误导。
+
+Rejected:
+- 只加 `--exposure-us` 的文档提示、不改工具：现场仍需自己试参数，
+  且「设了但不生效」的自动模式陷阱没有出口；
+- 在 `Viewer::show()` 里做 per-frame 直方图均衡：每帧 720×540 的统计开销会
+  挤占 126 Hz 的取流节奏，且与「看真实画面」的目标冲突。
