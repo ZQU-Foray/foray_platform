@@ -94,7 +94,8 @@
 │   │   ├── mvs_error.cpp/.hpp   MV_E_* → ErrorCode 映射
 │   │   └── timestamp.cpp/.hpp   PTP / 标定偏移 / 主机接收三路径换算
 │   ├── tools/
-│   │   └── camera_dump.cpp      配置 + 取 N 帧 + 帧率/丢帧统计
+│   │   ├── camera_dump.cpp      配置 + 取 N 帧 + 帧率/丢帧统计 + --view 预览
+│   │   └── viewer.cpp/.hpp      SDL2 预览窗口（8 位 Mono/Bayer → RGB24）
 │   └── test/hikvision/          mock 单测（生命周期/映射/时间戳/后端能力）
 └── .github/
     └── workflows/

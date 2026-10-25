@@ -171,7 +171,9 @@ Hikvision 驱动特性：
   接收时刻减去曝光延迟，都不成立则零 stamp + `kNoSync`；
 - 运行期调参走 `Camera::apply()`，节点写入失败保留 MVS 原始码供现场对照；
 - `FORAY_HIKVISION_BUILD_TOOLS=ON` 提供 `foray_hikvision_dump`
-  （配置 + 取 N 帧 + 帧率/丢帧统计，`--trigger-software` 走软触发）。
+  （配置 + 取 N 帧 + 帧率/丢帧统计，`--trigger-software` 走软触发）；
+  构建期找到 SDL2 时还支持 `--view` 开窗口实时预览画面（可选依赖，
+  找不到也不影响工具其余功能）。
 
 **雷达网络自举**：作为硬件抽象层的一部分，本仓必须能一键把物理网口挂进
 雷达网桥并配置主机地址，而不要求操作手现场 `sudo ip link`：

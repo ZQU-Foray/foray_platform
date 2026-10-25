@@ -509,6 +509,15 @@ MVS 侧可用信息：
 `foray_platform::hal::SensorStats` 全量计数；`--trigger-software` 走「先 trigger
 再 read」的软触发循环。
 
+`--view`（构建期 `find_package(SDL2 QUIET)` 找到 SDL2 才编译进 `tools/viewer.cpp`）
+再开一个 SDL2 窗口实时显示画面：8 位 Mono/Bayer 经块内插值转 RGB24 上传
+`SDL_Texture`，窗口可自由拉伸但**保持原始宽高比**（`SDL_RenderSetLogicalSize`，
+两侧自动留黑边——现场用这个窗口判断「视场对不对」时比例失真会直接导致误判）；
+窗口**延迟到首帧到达后才创建**（`--width/--height` 未指定时尺寸由设备决定）；
+按 ESC / `q` 或直接关窗即停止取流；带 `--view` 且未显式给 `--timeout-ms` 时读超时
+降到 100 ms（循环同时负责刷窗口与响应关窗）。没装 SDL2 时 `--view` 返回
+`kNotSupported`，工具其余功能不受影响，配置期打印「SDL2 未找到」。
+
 HIL 验收（2026-10-24，MV-CS004-10GC / `DB0985207` / `169.254.114.9`）：
 
 - ✅ 720×540 @ 118–127 Hz，**200 帧 0 丢包 / 0 超时 / 0 SDK 错误**；
@@ -516,6 +525,10 @@ HIL 验收（2026-10-24，MV-CS004-10GC / `DB0985207` / `169.254.114.9`）：
 - ✅ 曝光/增益下发：`--exposure-us 8000 --gain-db 6` 后帧内回报 8000 µs / 6 dB；
 - ✅ 软触发：`--trigger-software` 每帧一次 `MV_CC_TriggerSoftwareExecute`，逐帧出图；
 - ✅ `ldd` 看 core 测试**不出现** `libMvCameraControl`；
+- ✅ `--view` 预览（2026-10-25）：合成 720×540 棋盘帧经 `Viewer::show()` 后
+  `grim` 截屏，采样点精确为 `(40,40,40)` / `(220,220,220)`（Bayer→RGB 无偏色、
+  移动亮块可见）、画面 4:3 无拉伸；实机 `--frames 200 --view` rc=0、110.2 Hz、
+  0 丢包 / 0 超时；`SDL_VIDEODRIVER=dummy` 与无相机时均不建窗口、不崩；
 - ⏳ 拔插恢复（异常回调 → `kError` → `recover()`）只做了单测，未做物理拔插；
 - ⏳ 30 分钟长跑 RSS/FD/SDK 句柄平稳性未测。
 
@@ -568,7 +581,12 @@ HIL 验收（2026-10-24，MV-CS004-10GC / `DB0985207` / `169.254.114.9`）：
 - **枚举结果按 serial 去重**：主机同时持有 `169.254.114.1/16` 与 `192.168.1.51/24`
   时同一相机会被枚举两次，不去重会让 `model` 路径误判 `kDeviceAmbiguous`；
 - **`nHostTimeStamp` 不使用**：MVS 未定义其单位，只保留低 32 位进
-  `FrameInfoView::host_timestamp_raw` 供诊断。
+  `FrameInfoView::host_timestamp_raw` 供诊断；
+- **`--view` 的 Bayer→RGB 是块内插值**：只把同色像素填进对应通道，不做完整
+  去马赛克，细边缘会有伪彩。窗口只用于「有没有出图、视场对不对」，不用于成像
+  质量评估；分辨率变化（改 ROI/binning）时预览停止出图而非重建纹理，避免闪断；
+- **`--view` 依赖 SDL2，且刻意不开 `PRESENTVSYNC`**：显示不反向限流取帧节奏
+  （126 Hz 源被 60 Hz 拖慢会让帧池覆盖与丢帧统计都变得难解释），代价是可能撕裂。
 
 ## 14. 待确认
 
