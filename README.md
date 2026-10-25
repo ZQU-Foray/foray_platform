@@ -175,17 +175,26 @@ Hikvision 驱动特性：
   构建期找到 SDL2 时还支持 `--view` 开窗口实时预览画面（可选依赖，
   找不到也不影响工具其余功能）。
 
-**雷达网络自举**：作为硬件抽象层的一部分，本仓必须能一键把物理网口挂进
-雷达网桥并配置主机地址，而不要求操作手现场 `sudo ip link`：
+**设备网络自举**：作为硬件抽象层的一部分，本仓必须能一键把雷达 / GigE 相机
+所在的物理网口挂进对应网桥、配置主机地址与巨帧 MTU，而不要求操作手现场
+`sudo ip link`：
 
-- 只读探测拓扑（`foray/platform/net/net_types.hpp`）→ 幂等规划
+- 只读探测拓扑（`foray/platform/net/net_types.hpp`，含 sysfs MTU）→ 幂等规划
   （`plan_link`）→ 授权执行（`ensure_link`，失败自动回滚）；
+- 编排层 `foray/platform/net/bootstrap.hpp` 由雷达与相机工具共用：非 root 自动
+  `pkexec` 调 `foray-net-helper`，链路已就绪则跳过；
 - NetworkManager 优先（创建 `foray-<iface>-slave` profile，重启不丢），
-  没有 NM 时回退 rtnetlink；
+  没有 NM 时回退 rtnetlink；两条路径都实现 `set_mtu`；
+- 物理口已属于另一个网桥时默认拒绝，避免把雷达口从 `br-lidar` 静默抢走；
+  确需迁移时显式传 `--allow-reassign-master`；
+- MTU 设置失败只 warning 不阻断：GigE 720×540@125 Hz 在 1500 下实测可跑，
+  9014 是推荐值而非硬前提；
 - 特权只来自 polkit：`foray-net-helper` 装到 libexec，动作
   `org.foray.netconfig.bootstrap` 只放行该程序；
 - 雷达参数下发走 `foray_livox_config`，默认只读回校验，`--set-lidar-ip`
-  等显式开关才改写，写后必读回。
+  等显式开关才改写，写后必读回；
+- USB3 相机的协议级自举（USB3 Vision 控制通道）尚未实现，
+  `foray_hikvision_up --transport usb3` 目前只做可见性检测并打印 TODO。
 
 **急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
 位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，

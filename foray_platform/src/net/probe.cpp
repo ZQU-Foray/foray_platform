@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <system_error>
 
 namespace foray::platform::net {
@@ -61,6 +62,28 @@ std::string detect_master(const fs::path& dir) {
         return {};
     }
     return target.filename().string();
+}
+
+/**
+ * @brief 读 sysfs `mtu`。
+ *
+ * 读不到或内容非法时返回 0（未知），而不是让整次探测失败——MTU 只是可选校验项，
+ * 老内核/非常规接口上缺失不应妨碍桥配置。
+ */
+std::uint32_t detect_mtu(const fs::path& dir) {
+    const std::string text = read_first_line(dir / "mtu");
+    if (text.empty()) {
+        return 0;
+    }
+    try {
+        const auto value = std::stoul(text);
+        if (value == 0 || value > 65535) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(value);
+    } catch (const std::exception&) {
+        return 0;
+    }
 }
 
 void fill_ipv4_addresses(InterfaceInfo& info) {
@@ -165,6 +188,7 @@ Result<Topology> probe_topology(const ProbeOptions& options) {
         info.master = detect_master(dir);
         info.up = read_first_line(dir / "operstate") == "up";
         info.carrier = read_first_line(dir / "carrier") == "1";
+        info.mtu = detect_mtu(dir);
         fill_ipv4_addresses(info);
         topology.interfaces.push_back(std::move(info));
     }

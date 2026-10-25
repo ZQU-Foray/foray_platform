@@ -130,8 +130,8 @@ class RealFrameView final : public FrameView {
         // 超过 65535 的分辨率由扩展字段承载；常规相机只填 `nWidth`/`nHeight`。
         info_.width = raw.nWidth != 0 ? raw.nWidth : raw.nExtendWidth;
         info_.height = raw.nHeight != 0 ? raw.nHeight : raw.nExtendHeight;
-        info_.frame_length =
-            raw.nFrameLenEx != 0 ? static_cast<std::uint32_t>(raw.nFrameLenEx) : raw.nFrameLen;
+        // MVS 4.1.2.2 的 MV_FRAME_OUT_INFO_EX 没有扩展长度字段，`nFrameLen` 即本帧有效长度。
+        info_.frame_length = raw.nFrameLen;
         info_.pixel_format = to_pixel_format(raw.enPixelType);
         info_.frame_number = raw.nFrameNum;
         info_.trigger_index = raw.nTriggerIndex;

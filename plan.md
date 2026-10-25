@@ -179,9 +179,29 @@
 - **待 HIL**：实机雷达当前断线（`enp0s31f6` 无载波），helper 已能经 NM
   创建 `foray-enp0s31f6-slave` 并给出"没有载波"警告。
 
+### M12 交付物（设备网络自举：Hikvision GigE + MTU + 跨桥保护）
+
+- `net` 层：`InterfaceInfo::mtu`（sysfs 读，0=未知）、`NetBackend::set_mtu`
+  （NM 走 `802-3-ethernet.mtu`，netlink 走 `IFLA_MTU`）；
+- `plan_link`：动作序加 `set_mtu(物理口) → set_mtu(网桥)`，MTU 失败只 warning；
+  物理口已属另一桥时默认 `kInvalidArgument`，`allow_reassign_master` 显式放行；
+- `link_ready`：`(topology, iface, bridge, host_ip=nullopt, min_prefix=16,
+  min_mtu=nullopt)`，空地址只校验挂桥/载波，MTU 0 视为未知；
+- `net/bootstrap.hpp`：`bootstrap_link()` 编排（探拓扑 → 判就绪 → pkexec →
+  helper），雷达与相机共用；`foray_lidar_up` 删除本地拼装，改为调用它；
+- `foray-net-helper`：新增 `--mtu 576-65535` 与 `--allow-reassign-master`；
+- Hikvision：`camera_bootstrap`（LLA/同网段地址规划）、
+  `foray_hikvision_up`（挂 `br-camera` → 地址 → MTU → 枚举 → 取 3 帧），
+  USB3 只做可见性检测 + TODO；
+- 文档：[docs/net_bootstrap.md](docs/net_bootstrap.md) 去雷达限定，
+  `docs/driver_deployment.md` §2 加桥隔离/MTU、§4 加一键自举与 USB3 TODO；
+- 单测：平台 178 个用例（net MTU / 跨桥 / bootstrap），Hikvision 88 个
+  （新增地址规划 5 个），Livox 36 个回归全绿；
+- **待 HIL**：相机口 `enp0s13f0u1` 的实机自举与取帧（需现场授权改网络）。
+
 ## 当前 Agent State
 
-M11_NET_BOOTSTRAP_DONE（实机 HIL 待雷达恢复连接）
+M12_DEVICE_NET_BOOTSTRAP_CODE_DONE（实机 HIL 待现场授权）
 
 ## Before Snapshot
 

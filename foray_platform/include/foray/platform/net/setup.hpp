@@ -16,20 +16,31 @@ class ProcessRunner;
 
 /// 期望的网络拓扑：物理口 → 桥 → 宿主 IP。
 struct NetIntent {
-    std::string iface;                  ///< 雷达接出的物理网口
+    std::string iface;                  ///< 雷达/相机接出的物理网口
     std::string bridge;                 ///< 桥名（不存在时创建）
     std::optional<Ipv4> host_ip;        ///< 桥上的宿主地址；空表示不配置
     std::uint8_t prefix = 24;           ///< 与 host_ip 配套的前缀长度
+    /// @brief 期望的 MTU；空表示不改。物理口先设、桥后设。
+    std::optional<std::uint32_t> mtu;
+    /**
+     * @brief 物理口已属于另一个桥时是否允许抢过来。
+     *
+     * 默认拒绝：现场同时存在 br-lidar / br-camera 时，静默抢占会让另一台设备
+     * 无声掉线且原因难查；显式传 true 才重新挂桥。
+     */
+    bool allow_reassign_master = false;
 };
 
 /// 规划出的一步操作。
 struct LinkAction {
-    std::string operation; ///< ensure_bridge / set_slave / set_up / add_ipv4
+    std::string operation; ///< ensure_bridge / set_slave / set_up / set_mtu / add_ipv4
     std::string target;
     std::string detail;
     /// @brief add_ipv4 专用：地址与前缀，回滚时原样撤销。
     std::optional<Ipv4> address;
     std::uint8_t prefix = 0;
+    /// @brief set_mtu 专用：目标 MTU。
+    std::uint32_t mtu = 0;
 };
 
 /// 一次网络自举的结果；`planned` 与 `applied` 分开，dry-run 只填前者。
@@ -46,12 +57,17 @@ struct LinkReport {
 /**
  * @brief 判定链路是否已经满足意图（纯函数，不做 I/O）。
  *
- * 条件：物理口挂在指定桥下、桥 `up` 且有载波、主 IP 已配置且前缀不短于
- * `min_prefix`。`foray_lidar_up` 用它决定是否还需要跑特权 helper。
+ * 条件：物理口挂在指定桥下、桥 `up` 且有载波；`host_ip` 非空时还要求桥上已有
+ * 同地址且前缀不短于 `min_prefix`；`min_mtu` 非空时要求物理口与桥的 MTU 都不小于
+ * 该值（0 表示探测未读到，按未知处理、不判定失败）。
+ *
+ * 探测阶段还不知道设备地址时传空的 `host_ip`，只校验「挂桥 + master up + carrier」。
  */
 bool link_ready(const Topology& topology, const std::string& iface,
-                const std::string& bridge, const Ipv4& host_ip,
-                std::uint8_t min_prefix = 16);
+                const std::string& bridge,
+                std::optional<Ipv4> host_ip = std::nullopt,
+                std::uint8_t min_prefix = 16,
+                std::optional<std::uint32_t> min_mtu = std::nullopt);
 
 /// @brief 把期望拓扑与现状求差，得到有序操作列表（纯函数，不做任何 I/O）。
 Result<std::vector<LinkAction>> plan_link(const NetIntent& intent, const Topology& topology);

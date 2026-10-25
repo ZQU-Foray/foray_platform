@@ -52,6 +52,14 @@ class NetBackend {
     /// @brief 把接口拉起来。
     virtual Result<void> set_up(const std::string& name) = 0;
 
+    /**
+     * @brief 设置接口 MTU。
+     *
+     * 桥的每个 slave 都必须不小于桥自身的 MTU，因此调用方应先设物理口、再设桥。
+     * @param mtu 576–65535 字节。
+     */
+    virtual Result<void> set_mtu(const std::string& name, std::uint32_t mtu) = 0;
+
     /// @brief 给接口加一个 IPv4 地址。
     virtual Result<void> add_ipv4(const std::string& name, const Ipv4& ip, std::uint8_t prefix) = 0;
 

@@ -229,6 +229,30 @@ class NetlinkBackend final : public NetBackend {
         return send_request(request, "拉起 " + name);
     }
 
+    Result<void> set_mtu(const std::string& name, std::uint32_t mtu) override {
+        if (mtu < 576 || mtu > 65535) {
+            return Error{ErrorCode::kInvalidArgument,
+                         "MTU 超出 576–65535: " + std::to_string(mtu)};
+        }
+        const std::uint32_t index = index_of(name);
+        if (index == 0) {
+            return Error{ErrorCode::kDeviceNotFound, "找不到网口: " + name};
+        }
+        std::vector<char> request(NLMSG_SPACE(sizeof(ifinfomsg)), 0);
+        auto* header = reinterpret_cast<nlmsghdr*>(request.data());
+        header->nlmsg_len = NLMSG_LENGTH(sizeof(ifinfomsg));
+        header->nlmsg_type = RTM_NEWLINK;
+        header->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+        auto* info = reinterpret_cast<ifinfomsg*>(NLMSG_DATA(header));
+        info->ifi_family = AF_UNSPEC;
+        info->ifi_index = static_cast<int>(index);
+        // 只改 MTU，ifi_flags/ifi_change 保持 0，避免顺带改动 flags。
+        add_attr(request, IFLA_MTU, &mtu, sizeof(mtu));
+        header->nlmsg_len = static_cast<std::uint32_t>(request.size());
+        return send_request(request,
+                            "设置 " + name + " 的 MTU 为 " + std::to_string(mtu));
+    }
+
     Result<void> add_ipv4(const std::string& name, const Ipv4& ip, std::uint8_t prefix) override {
         return address_request(RTM_NEWADDR, name, ip, prefix, "配置地址");
     }

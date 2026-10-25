@@ -28,6 +28,7 @@ find_package(Threads REQUIRED)
 
 set(FORAY_HIKVISION_CORE_SOURCES
     src/hikvision/camera.cpp
+    src/hikvision/camera_bootstrap.cpp
     src/hikvision/camera_factory.cpp
     src/hikvision/mvs_error.cpp
     src/hikvision/mvs_nodes.cpp
@@ -89,7 +90,8 @@ target_include_directories(foray_hikvision_core_objects
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(foray_hikvision_core_objects PUBLIC foray_platform::hal)
+target_link_libraries(foray_hikvision_core_objects PUBLIC foray_platform::hal
+                                                    foray_platform::net)
 
 # 后端对象：真实 SDK 或 stub，二选一。
 add_library(foray_hikvision_backend_objects OBJECT ${FORAY_HIKVISION_BACKEND_SOURCES})
@@ -129,7 +131,7 @@ target_include_directories(foray_platform_driver_hikvision
 )
 
 target_link_libraries(foray_platform_driver_hikvision
-    PUBLIC foray_platform::hal
+    PUBLIC foray_platform::hal foray_platform::net
     PRIVATE Threads::Threads
 )
 if(FORAY_BUILD_DRIVER_HIKVISION)
@@ -151,6 +153,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
     # 生命周期/配置映射/时间换算：只链 core 对象 + mock，永远不依赖 SDK。
     add_executable(foray_platform_driver_hikvision_tests
         test/hikvision/camera_test.cpp
+        test/hikvision/camera_bootstrap_test.cpp
         test/hikvision/config_mapping_test.cpp
         test/hikvision/timestamp_test.cpp
         test/hikvision/mvs_error_test.cpp
@@ -161,6 +164,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         PRIVATE
             foray_hikvision_core_objects
             foray_platform::hal
+            foray_platform::net
             GTest::gtest_main
             Threads::Threads)
 
@@ -223,6 +227,20 @@ if(FORAY_HIKVISION_BUILD_TOOLS)
         target_compile_options(foray_hikvision_dump PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     install(TARGETS foray_hikvision_dump RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    # 一键自举：网络编排（可经 pkexec）+ 相机启动 + 取帧健康确认，与 foray_lidar_up 对齐。
+    add_executable(foray_hikvision_up tools/camera_up.cpp)
+    target_include_directories(foray_hikvision_up
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # 安装后的 helper 不在 PATH 里，编译期给一个默认绝对路径。
+    target_compile_definitions(foray_hikvision_up PRIVATE
+        FORAY_NET_HELPER_DEFAULT="${CMAKE_INSTALL_FULL_LIBEXECDIR}/foray_platform/foray-net-helper")
+    target_link_libraries(foray_hikvision_up
+        PRIVATE foray_platform_driver_hikvision foray_platform::net)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(foray_hikvision_up PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    install(TARGETS foray_hikvision_up RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
 set(FORAY_DRIVER_HIKVISION_NEEDS_SDK_AT_LINK 0)

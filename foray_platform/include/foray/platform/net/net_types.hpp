@@ -45,6 +45,8 @@ struct InterfaceInfo {
     bool managed_by_nm = false;
     /// @brief 所属桥名；空字符串表示未挂桥。
     std::string master;
+    /// @brief sysfs `mtu`；0 表示未读到（探测不因单字段缺失而整体失败）。
+    std::uint32_t mtu = 0;
     std::vector<std::pair<Ipv4, std::uint8_t>> addresses;
 };
 

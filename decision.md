@@ -660,3 +660,48 @@ Rejected:
   且「设了但不生效」的自动模式陷阱没有出口；
 - 在 `Viewer::show()` 里做 per-frame 直方图均衡：每帧 720×540 的统计开销会
   挤占 126 Hz 的取流节奏，且与「看真实画面」的目标冲突。
+
+## 2026-10-25 设备网络自举：MTU 进后端、跨桥默认拒绝、编排上移
+
+Date: 2026-10-25
+
+Context: Hikvision GigE 相机要求「插上相机 → 一条命令 → 出图」，但网络编排
+锁在 `foray_lidar_up` 内部，相机无法复用；全仓此前没有任何 MTU 能力，而
+`br-lidar` 与 `br-camera` 会同时存在，旧的 `set_slave` 会静默把物理口从
+另一个桥抢走，导致另一台设备无声掉线。
+
+Decision:
+- MTU 作为一等能力放进 `NetBackend::set_mtu` 与 `NetIntent::mtu`，NM 写
+  `802-3-ethernet.mtu`、netlink 写 `IFLA_MTU`，探测侧由 sysfs 读入
+  `InterfaceInfo::mtu`（读不到为 0，表示未知而不是 1500）；
+- `plan_link` 的动作序把 MTU 放在 `set_up` 之后、地址之前，且物理口先于网桥
+  （Linux 要求 slave MTU ≥ master）；MTU 失败只记 warning 不阻断；
+- 物理口已属另一桥时 `plan_link` 默认返回 `kInvalidArgument`，
+  `allow_reassign_master` / `--allow-reassign-master` 才放行；
+- 把 `foray_lidar_up` 的 bootstrap 段上移到 `net/bootstrap.hpp`，雷达与相机
+  共用同一套 pkexec/就绪判定/退出码映射；相机独占 `br-camera`，不与雷达共桥；
+- 相机地址按 RFC 3927 规划：桥上已有 `169.254/16` 就复用，否则取
+  `169.254.x/16`；固定 IP 相机取同 `/24` 的 `.1`（冲突用 `.254`）；
+- USB3 只做可见性检测并打印 TODO，协议级自举留到后续单元。
+
+Reason:
+- MTU 失败不阻断：2026-10-25 实测 720×540@125 Hz 在 1500 下可正常出图，
+  9014 是推荐值；若把 MTU 当硬门槛，不支持巨帧的 USB 网卡会直接挡住取流；
+- 跨桥默认拒绝：现场两个桥各自承载一台设备，静默抢占的代价是另一台设备
+  掉线且没有提示，比多敲一个开关危险得多；
+- 编排上移：雷达与相机的差异只在地址规划与驱动启动，探测/规划/授权/回滚
+  完全同构，复制一份必然分叉；
+- 相机独占桥：nmcli 拉起桥会短暂断链，共桥会把雷达的取流一起震断。
+
+Alternatives:
+- 在 `foray_hikvision_up` 里复制一份 lidar_up 的 argv 拼装：短期快，但
+  helper 参数、退出码、pkexec 语义会随两边演进分叉；
+- 把 MTU 直接放进 `set_up` 的参数：会破坏 `set_up` 的幂等语义，也无法表达
+  「物理口与网桥分别设置」；
+- 让相机复用 `br-lidar`：省一个桥，但 NM 激活桥时的链路抖动会同时影响雷达。
+
+Rejected:
+- 跨桥静默抢占：已发生过雷达口被抢的现场风险，不能再保留；
+- 在相机工具里用 shell 调 `ip link set mtu`：绕过 polkit 白名单与回滚；
+- USB3 先做半套控制通道：没有 USB3 Vision 协议栈时只能猜寄存器，
+  不如明确 TODO 并保持可检测。

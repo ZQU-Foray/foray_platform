@@ -152,5 +152,40 @@ TEST(NmBackendTest, ClearSlaveKeepsForeignProfile) {
     EXPECT_FALSE(runner.called("nmcli --colors no connection delete 有线连接 1"));
 }
 
+TEST(NmBackendTest, SetMtuUsesNmcli) {
+    auto runner = running_manager();
+    runner.responses[kList] = ProcessOutput{
+        0,
+        "br-camera:uuid-1:bridge:br-camera\n"
+        "foray-enp0s13f0u1-slave:uuid-2:bridge-slave:enp0s13f0u1\n",
+        {}};
+    auto backend = make_network_manager_backend(runner);
+    ASSERT_TRUE(backend.ok());
+
+    const auto slave_set = backend.value()->set_mtu("enp0s13f0u1", 9014);
+    ASSERT_TRUE(slave_set.ok());
+    EXPECT_TRUE(runner.called("nmcli --colors no connection modify "
+                              "foray-enp0s13f0u1-slave 802-3-ethernet.mtu 9014"));
+    EXPECT_TRUE(runner.called("nmcli --colors no connection up foray-enp0s13f0u1-slave"));
+
+    const auto bridge_set = backend.value()->set_mtu("br-camera", 9014);
+    ASSERT_TRUE(bridge_set.ok());
+    EXPECT_TRUE(runner.called("nmcli --colors no connection modify br-camera "
+                              "802-3-ethernet.mtu 9014"));
+    EXPECT_TRUE(runner.called("nmcli --colors no connection up br-camera"));
+}
+
+TEST(NmBackendTest, RejectsInvalidMtu) {
+    auto runner = running_manager();
+    auto backend = make_network_manager_backend(runner);
+    ASSERT_TRUE(backend.ok());
+    const auto too_small = backend.value()->set_mtu("br-camera", 575);
+    ASSERT_FALSE(too_small.ok());
+    EXPECT_EQ(too_small.error().code, ErrorCode::kInvalidArgument);
+    const auto too_large = backend.value()->set_mtu("br-camera", 65536);
+    ASSERT_FALSE(too_large.ok());
+    EXPECT_EQ(too_large.error().code, ErrorCode::kInvalidArgument);
+}
+
 } // namespace
 } // namespace foray::platform::net

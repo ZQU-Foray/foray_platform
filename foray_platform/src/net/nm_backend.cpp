@@ -107,6 +107,32 @@ Result<void> activate(ProcessRunner& runner, const std::string& connection) {
     return out.ok() ? Result<void>() : Result<void>(out.error());
 }
 
+/// 找到接口对应的 NM 连接：桥自身，或本工具创建的 foray-<iface>-slave。
+Result<std::string> connection_for(ProcessRunner& runner, const std::string& name) {
+    auto rows = list_connections(runner);
+    if (!rows.ok()) {
+        return rows.error();
+    }
+    for (const auto& row : rows.value()) {
+        if (row.type == "bridge" && (row.device == name || row.name == name)) {
+            return row.name;
+        }
+    }
+    const std::string slave_id = "foray-" + name + "-slave";
+    for (const auto& row : rows.value()) {
+        if (row.type == "bridge-slave" && row.device == name && row.name == slave_id) {
+            return row.name;
+        }
+    }
+    for (const auto& row : rows.value()) {
+        if (row.type == "bridge-slave" && row.device == name) {
+            return row.name;
+        }
+    }
+    return Error{ErrorCode::kDeviceNotFound,
+                 "找不到 " + name + " 的 NetworkManager 连接"};
+}
+
 /// 用户自建 profile 只停用、不删除；已停用时 nmcli 会报错，这里视为成功。
 Result<void> deactivate(ProcessRunner& runner, const std::string& connection) {
     (void)nmcli(runner, {"connection", "down", connection});
@@ -203,6 +229,25 @@ class NetworkManagerBackend final : public NetBackend {
         auto connection = bridge_connection(runner_, name, false);
         if (!connection.ok()) {
             return connection.error();
+        }
+        return activate(runner_, connection.value());
+    }
+
+    Result<void> set_mtu(const std::string& name, std::uint32_t mtu) override {
+        if (mtu < 576 || mtu > 65535) {
+            return Error{ErrorCode::kInvalidArgument,
+                         "MTU 超出 576–65535: " + std::to_string(mtu)};
+        }
+        auto connection = connection_for(runner_, name);
+        if (!connection.ok()) {
+            return connection.error();
+        }
+        auto modified = nmcli(runner_, {"connection", "modify", connection.value(),
+                                        "802-3-ethernet.mtu", std::to_string(mtu)});
+        if (!modified.ok()) {
+            return Error{modified.error().code, "设置 " + name + " 的 MTU 失败（profile " +
+                                                    connection.value() + "）: " +
+                                                    modified.error().message};
         }
         return activate(runner_, connection.value());
     }

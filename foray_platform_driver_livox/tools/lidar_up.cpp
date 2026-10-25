@@ -13,16 +13,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <vector>
-
-#include <unistd.h>
 
 #include "foray/platform/driver/livox/lidar.hpp"
 #include "foray/platform/hal/frame.hpp"
 #include "foray/platform/hal/lidar.hpp"
-#include "foray/platform/net/net_types.hpp"
-#include "foray/platform/net/process.hpp"
-#include "foray/platform/net/setup.hpp"
+#include "foray/platform/net/bootstrap.hpp"
 #include "foray/platform/time/clock.hpp"
 #include "foray/platform/time/duration.hpp"
 
@@ -119,57 +114,43 @@ bool parse_options(int argc, char** argv, Options& options) {
 }
 
 int bootstrap_link(const Options& options) {
-    const auto topology = net::probe_topology();
-    if (!topology.ok()) {
-        std::fprintf(stderr, "拓扑探测失败: %s\n", topology.error().message.c_str());
+    const auto host_ip = net::Ipv4::parse(options.host_ip);
+    if (!host_ip.has_value()) {
+        std::fprintf(stderr, "主机地址非法: %s\n", options.host_ip.c_str());
         return 5;
     }
-    const auto host_ip = net::Ipv4::parse(options.host_ip);
-    if (host_ip.has_value() &&
-        net::link_ready(topology.value(), options.iface, options.bridge, *host_ip)) {
-        std::fprintf(stderr, "链路已就绪: %s -> %s\n", options.iface.c_str(),
-                     options.bridge.c_str());
-        return 0;
-    }
 
+    net::BootstrapOptions bootstrap;
+    bootstrap.iface = options.iface;
+    bootstrap.bridge = options.bridge;
+    bootstrap.host_ip = *host_ip;
+    bootstrap.prefix = 24;
+    bootstrap.min_prefix = 16;
+    bootstrap.dry_run = options.dry_run;
+    bootstrap.helper = options.helper;
     // 默认名解析成安装路径；显式 --helper 保持原样。
-    std::string helper = options.helper;
-    if (helper == "foray-net-helper") {
+    if (bootstrap.helper == "foray-net-helper") {
 #ifdef FORAY_NET_HELPER_DEFAULT
-        helper = FORAY_NET_HELPER_DEFAULT;
+        bootstrap.helper = FORAY_NET_HELPER_DEFAULT;
 #endif
     }
 
-    std::vector<std::string> argv;
-    if (geteuid() != 0) {
-        // 非 root 时走 polkit 图形授权，不要求操作手在终端敲密码。
-        argv.emplace_back("pkexec");
-    }
-    argv.push_back(helper);
-    argv.insert(argv.end(),
-                {"--iface", options.iface, "--bridge", options.bridge, "--host-ip",
-                 options.host_ip});
-    if (options.dry_run) {
-        argv.emplace_back("--dry-run");
-    }
-
     net::ExecProcessRunner runner;
-    const auto executed = runner.run(argv);
-    if (!executed.ok()) {
-        std::fprintf(stderr, "调用网络自举失败: %s\n", executed.error().message.c_str());
+    net::ProcessOutput observed;
+    const auto result = net::bootstrap_link(bootstrap, runner, &observed);
+    if (!observed.out.empty()) {
+        std::fputs(observed.out.c_str(), stdout);
+    }
+    if (!observed.err.empty()) {
+        std::fputs(observed.err.c_str(), stderr);
+    }
+    if (!result.ok()) {
+        std::fprintf(stderr, "%s\n", result.error().message.c_str());
         return 5;
     }
-    const auto& output = executed.value();
-    if (!output.out.empty()) {
-        std::fputs(output.out.c_str(), stdout);
-    }
-    if (!output.err.empty()) {
-        std::fputs(output.err.c_str(), stderr);
-    }
-    if (output.exit_code != 0) {
-        std::fprintf(stderr, "网络自举退出码 %d（可用 --helper 指定路径）\n",
-                     output.exit_code);
-        return 5;
+    if (result.value().skipped) {
+        std::fprintf(stderr, "链路已就绪: %s -> %s\n", options.iface.c_str(),
+                     options.bridge.c_str());
     }
     return 0;
 }

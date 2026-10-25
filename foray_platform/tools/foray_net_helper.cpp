@@ -4,13 +4,14 @@
  *
  * 设计要点（对应 decision.md 的网络自举决策）：
  * - 不做 setuid 二进制；root 能力只来自 polkit/pkexec；
- * - 参数只有网口、网桥、主机地址、前缀，不执行任意命令；
+ * - 参数只有网口、网桥、主机地址/前缀、MTU 与跨桥放行开关，不执行任意命令；
  * - 先探测拓扑，再用 `ensure_link` 做幂等配置，失败自动回滚；
  * - 退出码：0 成功 / 1 用法错误 / 2 权限不足 / 3 配置失败 / 4 环境不支持。
  */
 
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +35,8 @@ struct Options {
     std::string iface;
     std::string bridge;
     std::string host_ip;
+    std::optional<std::uint32_t> mtu;
+    bool allow_reassign_master = false;
     bool dry_run = false;
     std::vector<std::string> warnings;
 };
@@ -41,9 +44,11 @@ struct Options {
 void print_usage() {
     std::fputs(
         "用法: foray-net-helper --iface <网口> --bridge <网桥> [--host-ip <IPv4>] [--prefix <1-32>]\n"
-        "                       [--dry-run]\n"
+        "                       [--mtu <576-65535>] [--allow-reassign-master] [--dry-run]\n"
         "      foray-net-helper --help\n"
-        "  --dry-run   只打印计划，不修改系统（仍需要 root 以读取 NM 状态）\n",
+        "  --mtu                    设置物理口与网桥的 MTU（失败只警告，不阻断）\n"
+        "  --allow-reassign-master  允许把已属于另一个网桥的物理口抢过来\n"
+        "  --dry-run                只打印计划，不修改系统（仍需要 root 以读取 NM 状态）\n",
         stderr);
 }
 
@@ -58,6 +63,21 @@ bool valid_name(const std::string& name) {
             return false;
         }
     }
+    return true;
+}
+
+/// 576 = IPv4 最小重组缓冲区（RFC 791）；65535 = MTU 的 16 位上限。
+bool parse_mtu(const std::string& text, std::optional<std::uint32_t>& mtu) {
+    if (text.empty()) {
+        return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long value = std::strtoul(text.c_str(), &end, 10);
+    if (errno != 0 || end == text.c_str() || *end != '\0' || value < 576UL || value > 65535UL) {
+        return false;
+    }
+    mtu = static_cast<std::uint32_t>(value);
     return true;
 }
 
@@ -88,6 +108,17 @@ bool parse_options(int argc, char** argv, Options& options, std::optional<net::I
             if (!next_value(options.host_ip)) {
                 return false;
             }
+        } else if (arg == "--mtu") {
+            std::string text;
+            if (!next_value(text)) {
+                return false;
+            }
+            if (!parse_mtu(text, options.mtu)) {
+                std::fprintf(stderr, "MTU 非法: %s（允许 576..65535）\n", text.c_str());
+                return false;
+            }
+        } else if (arg == "--allow-reassign-master") {
+            options.allow_reassign_master = true;
         } else if (arg == "--dry-run") {
             options.dry_run = true;
         } else if (arg == "--prefix") {
@@ -127,7 +158,8 @@ int run(const Options& options, const std::optional<net::Ipv4>& host_ip, std::ui
     }
 
     net::ExecProcessRunner runner;
-    net::NetIntent intent{options.iface, options.bridge, host_ip, prefix};
+    net::NetIntent intent{options.iface, options.bridge, host_ip, prefix, options.mtu,
+                          options.allow_reassign_master};
 
     const auto topology = net::probe_topology();
     if (!topology.ok()) {

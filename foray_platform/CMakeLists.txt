@@ -59,6 +59,7 @@ add_library(foray_platform_net
     src/net/nm_backend.cpp
     src/net/netlink_backend.cpp
     src/net/setup.cpp
+    src/net/bootstrap.cpp
 )
 add_library(foray_platform::net ALIAS foray_platform_net)
 set_target_properties(foray_platform_net PROPERTIES EXPORT_NAME net)
@@ -117,6 +118,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/net/probe_test.cpp
         test/net/setup_test.cpp
         test/net/nm_backend_test.cpp
+        test/net/bootstrap_test.cpp
     )
     target_link_libraries(foray_platform_tests
         PRIVATE foray_platform_net foray_platform_hal foray_platform_core GTest::gtest_main

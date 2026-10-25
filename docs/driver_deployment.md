@@ -125,8 +125,14 @@ ldd install/foray_platform_driver_livox/lib/libforay_platform_driver_livox.so | 
 |---|---|
 | 主机（有线网卡 / 网桥） | `192.168.1.51/24` |
 | Livox Mid-360 / Mid-360s | `192.168.1.1xx`（默认由序列号决定） |
-| 子网掩码 | `255.255.255.0` |
+| GigE 相机（保持 LLA） | `169.254.x.x`，主机在 `169.254/16` 内取一个地址 |
+| GigE 相机（固定地址） | 相机同网段，主机取同 `/24` 的 `.1` 或 `.254` |
+| 子网掩码 | 雷达 `255.255.255.0`；相机 LLA `255.255.0.0` |
 | 网关 | 不需要 |
+
+相机与雷达**不同桥**：雷达走 `br-lidar`，相机独占 `br-camera`。GigE 相机默认
+用链路本地地址（RFC 3927），一条 `/16` 地址即可覆盖整段；固定 IP 时只用
+`--host-ip` 显式指定，代码不猜网关。
 
 ### 2.2 网桥（推荐用 `foray-net-helper` 一键自举）
 
@@ -143,6 +149,20 @@ ip -brief addr show br-lidar      # 期望 UP + LOWER_UP + 192.168.1.51/24
 
 helper 输出 `applied:` 行说明实际改了什么，`warning:` 行给出「没有载波」等提示；
 失败会自动回滚已做的步骤，退出码：0 成功 / 1 用法 / 2 权限 / 3 配置失败 / 4 环境不支持。
+
+巨帧：GigE 相机建议 `--mtu 9014`（物理口与网桥一起设）。Linux 要求 slave 的
+MTU 不小于 master，helper 会先设物理口再设网桥；失败只 warning 不阻断，
+因为 720×540@125 Hz 在 1500 下实测可跑。
+
+桥隔离：物理口已属于另一个桥时 helper 默认拒绝——两个桥同时被抢会让另一台
+设备无声掉线。确认要迁移才加 `--allow-reassign-master`：
+
+```bash
+# 例：把相机口从旧桥迁到 br-camera（会先从旧桥摘下）
+pkexec /usr/libexec/foray_platform/foray-net-helper \
+    --iface enp0s13f0u1 --bridge br-camera --host-ip 169.254.114.1 \
+    --mtu 9014 --allow-reassign-master
+```
 
 #### 2.2.1 polkit 授权
 
@@ -269,7 +289,12 @@ cmake -S . -B build -DFORAY_BUILD_DRIVER_HIKVISION=ON -DFORAY_MVS_ROOT=/opt/MVS
   `192.168.1.51/24` 并存时 `nDeviceNum=2`）：驱动按 serial 去重，不必手动删地址；
 - USB3 硬件触发接 6-pin P7：pin 2 `OPTO_IN+`、pin 5 `OPTO_GND`（5–24 V）；
 - 验证：`FORAY_HIKVISION_BUILD_TOOLS=ON` 后跑
-  `foray_hikvision_dump <serial> --frames 200`，看「收/交付/丢弃/超时/SDK 错误」。
+  `foray_hikvision_dump <serial> --frames 200`，看「收/交付/丢弃/超时/SDK 错误」；
+- 一键自举：`foray_hikvision_up --iface enp0s13f0u1 --bridge br-camera --frames 3`
+  自动完成挂桥 → 主机地址（LLA 推导）→ 巨帧 MTU → 枚举 → 取帧；相机已是
+  `br-camera` slave 且地址在位时跳过网络步骤（`--dry-run` 只打印计划）；
+- USB3 Vision 的协议级自举尚未实现：`--transport usb3` 只枚举并打印设备与
+  `TODO: USB3 协议自举尚未完善`，随后 0 退出；USB3 相机不经过网桥。
 
 ## 5. 部署检查清单
 
@@ -289,3 +314,7 @@ Hikvision：
 - [ ] 曝光/增益下发后帧内回报与给定值一致（`--exposure-us` / `--gain-db`）
 - [ ] 软触发模式逐帧出图（`--trigger-software`）
 - [ ] 拔插恢复：异常回调 → `kError` → `recover()` 能重新取流
+- [ ] `foray_hikvision_up --iface <口> --frames 3` 无手工配网即出帧
+- [ ] `ip -brief addr show br-camera` 的 MTU 为 9014（或 warning 给出实际值）
+- [ ] 相机口与雷达口分属 `br-camera` / `br-lidar`，互不抢 slave
+

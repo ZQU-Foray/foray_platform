@@ -26,6 +26,9 @@ class FakeBackend final : public NetBackend {
     Result<void> set_up(const std::string& name) override {
         return record("set_up " + name);
     }
+    Result<void> set_mtu(const std::string& name, std::uint32_t mtu) override {
+        return record("set_mtu " + name + " " + std::to_string(mtu));
+    }
     Result<void> add_ipv4(const std::string& name, const Ipv4& ip, std::uint8_t prefix) override {
         return record("add_ipv4 " + name + " " + ip.to_string() + "/" +
                       std::to_string(static_cast<int>(prefix)));
@@ -72,7 +75,7 @@ Ipv4 ip_of(const char* text) {
 }
 
 TEST(SetupTest, PlansFullBootstrap) {
-    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24};
+    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
     const auto planned = plan_link(intent, topology_with_port());
     ASSERT_TRUE(planned.ok());
     ASSERT_EQ(planned.value().size(), 4U);
@@ -92,35 +95,35 @@ TEST(SetupTest, PlansNothingWhenAlreadyConfigured) {
     topology.interfaces.push_back(bridge);
     topology.interfaces.push_back(make_iface("eth0", LinkRole::kEthernet, true, true, "br-lidar"));
 
-    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24};
+    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
     const auto planned = plan_link(intent, topology);
     ASSERT_TRUE(planned.ok());
     EXPECT_TRUE(planned.value().empty());
 }
 
 TEST(SetupTest, RejectsBadIntent) {
-    NetIntent empty_iface{"", "br-lidar", ip_of("192.168.1.51"), 24};
+    NetIntent empty_iface{"", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
     EXPECT_FALSE(plan_link(empty_iface, topology_with_port()).ok());
 
-    NetIntent same{"eth0", "eth0", std::nullopt, 24};
+    NetIntent same{"eth0", "eth0", std::nullopt, 24, std::nullopt, false};
     EXPECT_FALSE(plan_link(same, topology_with_port()).ok());
 
-    NetIntent missing{"eth9", "br-lidar", std::nullopt, 24};
+    NetIntent missing{"eth9", "br-lidar", std::nullopt, 24, std::nullopt, false};
     const auto planned = plan_link(missing, topology_with_port());
     ASSERT_FALSE(planned.ok());
     EXPECT_EQ(planned.error().code, ErrorCode::kDeviceNotFound);
 
-    NetIntent bad_prefix{"eth0", "br-lidar", ip_of("192.168.1.51"), 33};
+    NetIntent bad_prefix{"eth0", "br-lidar", ip_of("192.168.1.51"), 33, std::nullopt, false};
     EXPECT_FALSE(plan_link(bad_prefix, topology_with_port()).ok());
 
     Topology bridge_as_port;
     bridge_as_port.interfaces.push_back(make_iface("br0", LinkRole::kBridge, true, true));
-    NetIntent bridge_iface{"br0", "br-lidar", std::nullopt, 24};
+    NetIntent bridge_iface{"br0", "br-lidar", std::nullopt, 24, std::nullopt, false};
     EXPECT_FALSE(plan_link(bridge_iface, bridge_as_port).ok());
 }
 
 TEST(SetupTest, DryRunDoesNotTouchBackend) {
-    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24};
+    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
     FakeBackend backend;
     const auto report = ensure_link(intent, topology_with_port(), backend, true);
     ASSERT_TRUE(report.ok());
@@ -132,7 +135,7 @@ TEST(SetupTest, DryRunDoesNotTouchBackend) {
 }
 
 TEST(SetupTest, AppliesPlannedActionsInOrder) {
-    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24};
+    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
     FakeBackend backend;
     const auto report = ensure_link(intent, topology_with_port(), backend);
     ASSERT_TRUE(report.ok());
@@ -146,7 +149,7 @@ TEST(SetupTest, AppliesPlannedActionsInOrder) {
 }
 
 TEST(SetupTest, RollsBackOnFailure) {
-    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24};
+    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
     FakeBackend backend;
     backend.fail_prefix = "set_up";
     const auto report = ensure_link(intent, topology_with_port(), backend);
@@ -161,12 +164,84 @@ TEST(SetupTest, RollsBackOnFailure) {
 TEST(SetupTest, WarnsWhenPortHasNoCarrier) {
     Topology topology;
     topology.interfaces.push_back(make_iface("eth0", LinkRole::kEthernet, true, false));
-    NetIntent intent{"eth0", "br-lidar", std::nullopt, 24};
+    NetIntent intent{"eth0", "br-lidar", std::nullopt, 24, std::nullopt, false};
     FakeBackend backend;
     const auto report = ensure_link(intent, topology, backend, true);
     ASSERT_TRUE(report.ok());
     ASSERT_EQ(report.value().warnings.size(), 1U);
     EXPECT_NE(report.value().warnings[0].find("没有载波"), std::string::npos);
+}
+
+TEST(SetupTest, PlansMtuActionsInOrder) {
+    NetIntent intent{"eth0", "br-camera", ip_of("169.254.209.1"), 16, std::nullopt, false};
+    intent.mtu = 9014;
+    const auto planned = plan_link(intent, topology_with_port());
+    ASSERT_TRUE(planned.ok());
+    ASSERT_EQ(planned.value().size(), 6U);
+    // 物理口先于桥：Linux 要求 slave MTU ≥ bridge MTU。
+    EXPECT_EQ(planned.value()[3].operation, "set_mtu");
+    EXPECT_EQ(planned.value()[3].target, "eth0");
+    EXPECT_EQ(planned.value()[3].mtu, 9014U);
+    EXPECT_EQ(planned.value()[4].operation, "set_mtu");
+    EXPECT_EQ(planned.value()[4].target, "br-camera");
+    EXPECT_EQ(planned.value()[4].mtu, 9014U);
+    EXPECT_EQ(planned.value()[5].operation, "add_ipv4");
+}
+
+TEST(SetupTest, SkipsMtuWhenAlreadyMatched) {
+    Topology topology;
+    auto bridge = make_iface("br-camera", LinkRole::kBridge, true, true);
+    bridge.mtu = 9014;
+    bridge.addresses.emplace_back(ip_of("169.254.209.1"), 16);
+    auto port = make_iface("eth0", LinkRole::kEthernet, true, true, "br-camera");
+    port.mtu = 9014;
+    topology.interfaces = {bridge, port};
+
+    NetIntent intent{"eth0", "br-camera", ip_of("169.254.209.1"), 16, std::nullopt, false};
+    intent.mtu = 9014;
+    const auto planned = plan_link(intent, topology);
+    ASSERT_TRUE(planned.ok());
+    EXPECT_TRUE(planned.value().empty());
+}
+
+TEST(SetupTest, RejectsCrossBridgeReassign) {
+    Topology topology;
+    topology.interfaces.push_back(
+        make_iface("eth0", LinkRole::kEthernet, true, true, "br-lidar"));
+    NetIntent intent{"eth0", "br-camera", std::nullopt, 24, std::nullopt, false};
+    const auto planned = plan_link(intent, topology);
+    ASSERT_FALSE(planned.ok());
+    EXPECT_EQ(planned.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_NE(planned.error().message.find("br-lidar"), std::string::npos);
+    EXPECT_NE(planned.error().message.find("br-camera"), std::string::npos);
+    EXPECT_NE(planned.error().message.find("allow_reassign_master"), std::string::npos);
+}
+
+TEST(SetupTest, AllowsCrossBridgeReassignWhenRequested) {
+    Topology topology;
+    topology.interfaces.push_back(
+        make_iface("eth0", LinkRole::kEthernet, true, true, "br-lidar"));
+    NetIntent intent{"eth0", "br-camera", std::nullopt, 24, std::nullopt, false};
+    intent.allow_reassign_master = true;
+    const auto planned = plan_link(intent, topology);
+    ASSERT_TRUE(planned.ok());
+    ASSERT_FALSE(planned.value().empty());
+    EXPECT_EQ(planned.value()[1].operation, "set_slave");
+    EXPECT_EQ(planned.value()[1].target, "eth0");
+}
+
+TEST(SetupTest, MtuFailureDegradesToWarning) {
+    NetIntent intent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
+    intent.mtu = 9014;
+    FakeBackend backend;
+    backend.fail_prefix = "set_mtu";
+    const auto report = ensure_link(intent, topology_with_port(), backend);
+    ASSERT_TRUE(report.ok());
+    EXPECT_TRUE(report.value().ok);
+    ASSERT_FALSE(report.value().warnings.empty());
+    EXPECT_NE(report.value().warnings[0].find("可能丢包"), std::string::npos);
+    // 软失败不进回滚链：地址配置仍应执行完成。
+    EXPECT_EQ(backend.calls.back(), "add_ipv4 br-lidar 192.168.1.51/24");
 }
 
 } // namespace
@@ -198,6 +273,62 @@ TEST(SetupTest, LinkReadyChecksMasterCarrierAndAddress) {
 
     topology.interfaces[1].master.clear();
     EXPECT_FALSE(foray::platform::net::link_ready(topology, "enp0s31f6", "br-lidar", ip));
+}
+
+TEST(SetupTest, LinkReadyChecksMtu) {
+    foray::platform::net::Topology topology;
+    foray::platform::net::InterfaceInfo bridge;
+    bridge.name = "br-camera";
+    bridge.role = foray::platform::net::LinkRole::kBridge;
+    bridge.up = true;
+    bridge.carrier = true;
+    bridge.mtu = 1500;
+    bridge.addresses.emplace_back(*foray::platform::net::Ipv4::parse("169.254.209.1"), 16);
+    foray::platform::net::InterfaceInfo port;
+    port.name = "enp0s13f0u1";
+    port.role = foray::platform::net::LinkRole::kEthernet;
+    port.up = true;
+    port.master = "br-camera";
+    port.mtu = 1500;
+    topology.interfaces = {bridge, port};
+
+    const auto ip = *foray::platform::net::Ipv4::parse("169.254.209.1");
+    EXPECT_FALSE(foray::platform::net::link_ready(topology, "enp0s13f0u1", "br-camera", ip, 16,
+                                                  9014));
+
+    topology.interfaces[0].mtu = 9014;
+    EXPECT_FALSE(foray::platform::net::link_ready(topology, "enp0s13f0u1", "br-camera", ip, 16,
+                                                  9014));
+    topology.interfaces[1].mtu = 9014;
+    EXPECT_TRUE(foray::platform::net::link_ready(topology, "enp0s13f0u1", "br-camera", ip, 16,
+                                                 9014));
+
+    // 0 表示探测未读到，按未知处理而不是判定失败。
+    topology.interfaces[0].mtu = 0;
+    topology.interfaces[1].mtu = 0;
+    EXPECT_TRUE(foray::platform::net::link_ready(topology, "enp0s13f0u1", "br-camera", ip, 16,
+                                                 9014));
+}
+
+TEST(SetupTest, LinkReadyWithoutHostIpOnlyChecksCarrier) {
+    foray::platform::net::Topology topology;
+    foray::platform::net::InterfaceInfo bridge;
+    bridge.name = "br-camera";
+    bridge.role = foray::platform::net::LinkRole::kBridge;
+    bridge.up = true;
+    bridge.carrier = true;
+    foray::platform::net::InterfaceInfo port;
+    port.name = "enp0s13f0u1";
+    port.role = foray::platform::net::LinkRole::kEthernet;
+    port.up = true;
+    port.master = "br-camera";
+    topology.interfaces = {bridge, port};
+
+    EXPECT_TRUE(
+        foray::platform::net::link_ready(topology, "enp0s13f0u1", "br-camera"));
+    topology.interfaces[0].carrier = false;
+    EXPECT_FALSE(
+        foray::platform::net::link_ready(topology, "enp0s13f0u1", "br-camera"));
 }
 
 TEST(SetupTest, ReplacesStaleAddressInSameSubnet) {

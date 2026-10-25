@@ -109,5 +109,32 @@ TEST(ProbeTest, MissingRootIsError) {
     EXPECT_EQ(topology.error().code, ErrorCode::kDeviceNotFound);
 }
 
+TEST(ProbeTest, ReadsMtuAndFallsBackToZero) {
+    FakeSysfs tree;
+    tree.write("fte0", "type", "1\n");
+    tree.write("fte0", "mtu", "9014\n");
+    // 没有 mtu 文件：老内核或非常规接口，按未知处理。
+    tree.write("fte1", "type", "1\n");
+    tree.write("fte2", "type", "1\n");
+    tree.write("fte2", "mtu", "bogus\n");
+    tree.write("fte3", "type", "1\n");
+    tree.write("fte3", "mtu", "0\n");
+    tree.write("fte4", "type", "1\n");
+    tree.write("fte4", "mtu", "70000\n");
+
+    const auto topology = probe_topology(options_for(tree));
+    ASSERT_TRUE(topology.ok());
+    ASSERT_NE(topology.value().find("fte0"), nullptr);
+    EXPECT_EQ(topology.value().find("fte0")->mtu, 9014U);
+    ASSERT_NE(topology.value().find("fte1"), nullptr);
+    EXPECT_EQ(topology.value().find("fte1")->mtu, 0U);
+    ASSERT_NE(topology.value().find("fte2"), nullptr);
+    EXPECT_EQ(topology.value().find("fte2")->mtu, 0U);
+    ASSERT_NE(topology.value().find("fte3"), nullptr);
+    EXPECT_EQ(topology.value().find("fte3")->mtu, 0U);
+    ASSERT_NE(topology.value().find("fte4"), nullptr);
+    EXPECT_EQ(topology.value().find("fte4")->mtu, 0U);
+}
+
 } // namespace
 } // namespace foray::platform::net

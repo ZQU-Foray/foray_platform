@@ -41,7 +41,7 @@
 │   │   ├── param/               实现、内部校验与 YAML 工具
 │   │   ├── result/error.cpp
 │   │   ├── config/              resolver · exporter · tool
-│   │   ├── net/                 probe · process · NM/netlink 后端 · plan/ensure_link
+│   │   ├── net/                 probe · process · NM/netlink 后端 · plan/ensure_link · bootstrap
 │   │   └── hal/config_binder.cpp
 │   └── test/
 │       ├── time/                时钟单测
@@ -49,6 +49,7 @@
 │       ├── result/              错误码 / Result 单测
 │       ├── container/           SPSC 队列单测
 │       ├── config/              分层 / include / env / 导出单测
+│       ├── net/                 MTU / 计划 / 回滚 / 跨桥 / bootstrap 单测
 │       └── hal/                 类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
 │   ├── tools/foray_net_helper.cpp  特权网络自举 helper（pkexec）
 │   └── deploy/                 polkit 动作 + 免密规则
@@ -85,6 +86,7 @@
 │   │   └── camera.hpp           公共工厂（无 SDK 类型）
 │   ├── src/hikvision/
 │   │   ├── camera.cpp/.hpp      生命周期、设备选择、取流线程、帧发布
+│   │   ├── camera_bootstrap.cpp/.hpp  相机地址规划（LLA / 同网段 / 复用桥上地址）
 │   │   ├── camera_factory.cpp/.hpp  注入 MvsApi 的内部工厂
 │   │   ├── camera_public_factory.cpp  公共 make_camera（取后端）
 │   │   ├── mvs_api.hpp          MVS 函数表抽象
@@ -95,8 +97,9 @@
 │   │   └── timestamp.cpp/.hpp   PTP / 标定偏移 / 主机接收三路径换算
 │   ├── tools/
 │   │   ├── camera_dump.cpp      配置 + 取 N 帧 + 帧率/丢帧统计 + --view 预览
+│   │   ├── camera_up.cpp        一键自举：挂桥 + 地址 + MTU + 取帧健康确认
 │   │   └── viewer.cpp/.hpp      SDL2 预览窗口（8 位 Mono/Bayer → RGB24）
-│   └── test/hikvision/          mock 单测（生命周期/映射/时间戳/后端能力）
+│   └── test/hikvision/          mock 单测（生命周期/映射/时间戳/地址规划/后端能力）
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板
