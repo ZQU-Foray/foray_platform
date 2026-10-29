@@ -70,6 +70,26 @@ enum class TriggerActivation {
     kLevelLow,
 };
 
+/// @brief 自动调节模式，对应 GenICam 的 `Off` / `Once` / `Continuous`。
+enum class AutoMode {
+    kOff,
+    /// @brief 下一次采集生效后设备自动回到 `kOff`。
+    kOnce,
+    kContinuous,
+};
+
+/// @brief 时间戳来源策略。
+///
+/// 与 `docs/driver_hikvision.md` §7 的三条路径对应：
+/// - `kAuto`：按 PTP → 标定偏移 → 主机接收 的优先级推导；
+/// - `kDevice`：强制使用设备计数换算，时钟不可用时置 `kNoSync`、不回退主机时刻；
+/// - `kHostReceive`：强制使用主机接收时刻。
+enum class TimestampSource {
+    kAuto,
+    kDevice,
+    kHostReceive,
+};
+
 constexpr const char* to_string(DeviceState state) noexcept {
     switch (state) {
     case DeviceState::kClosed:
@@ -180,6 +200,30 @@ constexpr const char* to_string(TriggerActivation activation) noexcept {
         return "level_high";
     case TriggerActivation::kLevelLow:
         return "level_low";
+    }
+    return "unknown";
+}
+
+constexpr const char* to_string(AutoMode mode) noexcept {
+    switch (mode) {
+    case AutoMode::kOff:
+        return "off";
+    case AutoMode::kOnce:
+        return "once";
+    case AutoMode::kContinuous:
+        return "continuous";
+    }
+    return "unknown";
+}
+
+constexpr const char* to_string(TimestampSource source) noexcept {
+    switch (source) {
+    case TimestampSource::kAuto:
+        return "auto";
+    case TimestampSource::kDevice:
+        return "device";
+    case TimestampSource::kHostReceive:
+        return "host_receive";
     }
     return "unknown";
 }

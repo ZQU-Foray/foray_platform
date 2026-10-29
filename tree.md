@@ -20,7 +20,10 @@
 │   ├── hal_architecture.md      HAL 生命周期、帧池与零拷贝
 │   ├── hal_sensor_driver_research.md  海康 / Livox SDK 封装调研
 │   ├── driver_livox.md          Livox 驱动：运行时、解析、组帧与时间语义
+│   ├── driver_hikvision.md      海康 MVS 驱动：接入序列、隔离与时间戳
+│   ├── camera_config.md         相机配置键空间、分级与动态参数契约
 │   ├── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
+│   ├── sdk_packaging_survey.md  厂商相机 SDK 打包与调用横评
 │   └── robolink_protocol_review.md  候选 RoboLink 线协议对账（待电控逐字节确认）
 ├── foray_platform/              合并包：L1 core + L2 hal（不依赖 ROS）
 │   ├── CMakeLists.txt
@@ -76,6 +79,28 @@
 │   │   ├── livox_dump.cpp       点云导出（PCD/PPM/流式 stdout）与自检
 │   │   └── livox_config.cpp     雷达参数读回/下发/再校验
 │   └── test/livox/              mock 单测 + backend 能力测试
+├── foray_platform_driver_hikvision/ 海康 MVS 驱动（纯 CMake，不依赖 ROS）
+│   ├── CMakeLists.txt
+│   ├── package.xml
+│   ├── cmake/
+│   │   ├── FindMVS.cmake        暴露 MVS::MvCameraControl（可与官方 CONFIG 互换）
+│   │   └── foray_platform_driver_hikvisionConfig.cmake.in
+│   ├── include/foray/platform/driver/hikvision/
+│   │   └── camera.hpp           公共工厂（无 SDK 类型）
+│   ├── src/hikvision/
+│   │   ├── camera.cpp/.hpp      生命周期、设备选择、取流线程、帧发布
+│   │   ├── camera_factory.cpp/.hpp  注入 MvsApi 的内部工厂
+│   │   ├── camera_public_factory.cpp  公共 make_camera（取后端）
+│   │   ├── mvs_api.hpp          MVS 函数表抽象
+│   │   ├── mvs_api_real.cpp     MVS ON 时的真实实现
+│   │   ├── mvs_api_stub.cpp     MVS OFF 时的 stub
+│   │   ├── mvs_nodes.cpp/.hpp   CameraConfig/CameraTuning → 节点名与值
+│   │   ├── mvs_error.cpp/.hpp   MV_E_* → ErrorCode 映射
+│   │   └── timestamp.cpp/.hpp   PTP / 标定偏移 / 主机接收三路径换算
+│   ├── tools/
+│   │   ├── camera_dump.cpp      配置 + 取 N 帧 + 帧率/丢帧统计 + --view 预览
+│   │   └── viewer.cpp/.hpp      SDL2 预览窗口（8 位 Mono/Bayer → RGB24）
+│   └── test/hikvision/          mock 单测（生命周期/映射/时间戳/后端能力）
 └── .github/
     └── workflows/
         └── ci.yml               复制自组织 CI 模板
@@ -83,7 +108,7 @@
 
 > L2 HAL（同包 `hal` target）已落地；`link` target 的 USB CDC 与候选 RoboLink 编解码、主机链路
 > 已离线全绿（尚无装配程序，未与 MCU 固件联调）；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
-> Hikvision 驱动与 ROS 适配层按计划加入。
+> Hikvision 驱动已落地（mock 全绿，MV-CS004-10GC 实机取流已验证）；ROS 适配层按计划加入。
 
 ## 目录职责
 

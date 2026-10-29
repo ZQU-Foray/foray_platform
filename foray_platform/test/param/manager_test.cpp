@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -189,6 +190,94 @@ shooter:
     ASSERT_TRUE(manager.reload().ok());
     EXPECT_DOUBLE_EQ(manager.snapshot()->get_double("chassis.max_speed", 0.0), 4.0);
     EXPECT_EQ(manager.snapshot()->get_int("shooter.burst", 0), 6);
+}
+
+TEST(ParamManagerTest, ChangeListenerReceivesOnlyChangedKeys) {
+    auto source = std::make_shared<MapParamSource>(
+        ParamValueMap{{"chassis.max_speed", ParamValue(2.0)}, {"shooter.burst", ParamValue(5)}});
+    ParamManager manager(make_schema(), {source});
+    ASSERT_TRUE(manager.load_initial().ok());
+
+    std::vector<ParamManager::ParamChange> received;
+    const ParamManager::ListenerId id = manager.add_change_listener(
+        [&received](const std::vector<ParamManager::ParamChange>& changes) {
+            received = changes;
+        });
+    ASSERT_NE(id, 0U);
+
+    // shooter.burst 保持不变，只有 chassis.max_speed 变化。
+    source->set(ParamValueMap{{"chassis.max_speed", ParamValue(3.5)},
+                              {"shooter.burst", ParamValue(5)}});
+    ASSERT_TRUE(manager.reload().ok());
+
+    ASSERT_EQ(received.size(), 1U);
+    EXPECT_EQ(received.front().name, "chassis.max_speed");
+    EXPECT_DOUBLE_EQ(received.front().old_value.as_double(), 2.0);
+    EXPECT_DOUBLE_EQ(received.front().new_value.as_double(), 3.5);
+    EXPECT_TRUE(manager.remove_change_listener(id));
+}
+
+TEST(ParamManagerTest, ChangeListenerSilentWhenReloadChangesNothing) {
+    auto source = std::make_shared<MapParamSource>(
+        ParamValueMap{{"chassis.max_speed", ParamValue(2.0)}, {"shooter.burst", ParamValue(5)}});
+    ParamManager manager(make_schema(), {source});
+    ASSERT_TRUE(manager.load_initial().ok());
+
+    int calls = 0;
+    manager.add_change_listener(
+        [&calls](const std::vector<ParamManager::ParamChange>& /*changes*/) { ++calls; });
+
+    source->set(ParamValueMap{{"chassis.max_speed", ParamValue(2.0)},
+                              {"shooter.burst", ParamValue(5)}});
+    ASSERT_TRUE(manager.reload().ok());
+
+    EXPECT_EQ(calls, 0);
+}
+
+TEST(ParamManagerTest, ChangeListenerNotifiedOnInitialLoad) {
+    auto source = std::make_shared<MapParamSource>(
+        ParamValueMap{{"chassis.max_speed", ParamValue(2.0)}});
+    ParamManager manager(make_schema(), {source});
+
+    std::size_t changed = 0;
+    manager.add_change_listener(
+        [&changed](const std::vector<ParamManager::ParamChange>& changes) {
+            changed = changes.size();
+        });
+
+    ASSERT_TRUE(manager.load_initial().ok());
+
+    // 默认值 1.0 → 来源值 2.0，只有一个键变化。
+    EXPECT_EQ(changed, 1U);
+}
+
+TEST(ParamManagerTest, ChangeListenerExceptionDoesNotBreakReload) {
+    auto source = std::make_shared<MapParamSource>(
+        ParamValueMap{{"chassis.max_speed", ParamValue(2.0)}});
+    ParamManager manager(make_schema(), {source});
+    ASSERT_TRUE(manager.load_initial().ok());
+
+    manager.add_change_listener([](const std::vector<ParamManager::ParamChange>& /*changes*/) {
+        throw std::runtime_error("listener failure");
+    });
+    int after_throw = 0;
+    manager.add_change_listener(
+        [&after_throw](const std::vector<ParamManager::ParamChange>& /*changes*/) { ++after_throw; });
+
+    source->set(ParamValueMap{{"chassis.max_speed", ParamValue(6.0)}});
+    EXPECT_TRUE(manager.reload().ok());
+
+    // 抛异常的监听器被跳过，后续监听器仍收到通知。
+    EXPECT_EQ(after_throw, 1);
+    EXPECT_DOUBLE_EQ(manager.snapshot()->get_double("chassis.max_speed", 0.0), 6.0);
+}
+
+TEST(ParamManagerTest, RemoveUnknownListenerReturnsFalse) {
+    ParamManager manager(make_schema(), {});
+    ASSERT_TRUE(manager.load_initial().ok());
+
+    EXPECT_FALSE(manager.remove_change_listener(0));
+    EXPECT_FALSE(manager.remove_change_listener(12345));
 }
 
 } // namespace

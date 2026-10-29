@@ -88,7 +88,7 @@ colcon test --event-handlers console_direct+
 | 类型 | 依赖 |
 |---|---|
 | **自研仓** | `foray_interfaces`（X2 接口契约层） |
-| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · Livox SDK2（可选，驱动编译开关）· Hikvision MVS（可选，待落地） |
+| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · Livox SDK2（可选，驱动编译开关）· Hikvision MVS（可选，驱动编译开关） |
 
 ## 接口
 
@@ -171,7 +171,7 @@ colcon test --event-handlers console_direct+
 | 包 | 接口 | 状态 |
 |---|---|---|
 | `foray_platform_driver_livox` | `foray::platform::driver::livox::make_lidar(const hal::LidarConfig&)` | **代码、mock 测试与实机 HIL 已完成**（Mid-360s） |
-| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | 未开始（M7/M8） |
+| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | **代码、mock 测试与实机 HIL 已完成**（MV-CS004-10GC），见 [接入与封装方案](docs/driver_hikvision.md) |
 
 Livox 驱动特性：
 
@@ -186,6 +186,21 @@ Livox 驱动特性：
 - `FORAY_LIVOX_BUILD_TOOLS=ON` 提供 `foray_livox_dump`
   （PCD + 俯视 PPM；`--stream` 逐点流式 stdout，统计走 stderr）与
   `foray_livox_config`（读回 → 下发雷达 IP/姿态/主机端口 → 再读回校验）。
+
+Hikvision 驱动特性：
+
+- `detail::MvsApi` 抽象掉全部 `MV_CC_*` 调用，单测用 mock、编译期 OFF 时退化到
+  stub（所有操作 `kSdkUnavailable`），上层加载路径不变；
+- 设备选择按 `serial` → `user_defined_name` → `model`+`index` → `ip` 依次收窄，
+  条件不足一律报错，**不猜**；枚举结果按 serial 去重（主机双 IP 会让同一相机出现两次）；
+- 只映射 8 位 Mono/Bayer 五种格式，其它格式的帧被拒绝并计 `sdk_errors`；
+- 时间戳三条路径：PTP 从设备 tick 换算、标定偏移校正主机时钟、无同步时按
+  接收时刻减去曝光延迟，都不成立则零 stamp + `kNoSync`；
+- 运行期调参走 `Camera::apply()`，节点写入失败保留 MVS 原始码供现场对照；
+- `FORAY_HIKVISION_BUILD_TOOLS=ON` 提供 `foray_hikvision_dump`
+  （配置 + 取 N 帧 + 帧率/丢帧统计，`--trigger-software` 走软触发）；
+  构建期找到 SDL2 时还支持 `--view` 开窗口实时预览画面（可选依赖，
+  找不到也不影响工具其余功能）。
 
 **雷达网络自举**：作为硬件抽象层的一部分，本仓必须能一键把物理网口挂进
 雷达网桥并配置主机地址，而不要求操作手现场 `sudo ip link`：
@@ -230,7 +245,10 @@ Livox 驱动特性：
 - [L2 HAL 架构](docs/hal_architecture.md)——生命周期、线程模型、帧池与零拷贝边界
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 - [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
+- [Hikvision 驱动方案](docs/driver_hikvision.md)——MVS 接入序列、`MvsApi` 隔离、取流线程、配置映射与时间戳
+- [相机配置](docs/camera_config.md)——`camera.*` 键空间、静态/动态分级与运行时调参契约
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
+- [厂商 SDK 打包调研](docs/sdk_packaging_survey.md)——RM 战队如何打包与调用 MVS 等闭源相机 SDK（横评）
 - [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
 - [RoboLink 协议对账](docs/robolink_protocol_review.md)——候选线协议逐字段核对，待电控确认
 

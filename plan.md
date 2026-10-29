@@ -18,6 +18,7 @@
 - [ ] USB CDC 设备参数配置与错误恢复策略细化（波特率/超时/重试）
 - [ ] 接一个真实驱动跑通「一个传感器 → 一个话题」
   - Livox 驱动代码与 mock 测试已完成；真实 SDK 构建 + HIL 已通过
+  - Hikvision 相机驱动代码、81 个 mock 单测与 MV-CS004-10GC 实机取流已通过
 - [ ] 实现急停硬路径（独立实时线程 + 超时定时器）
 
 ### 任务 1 交付物
@@ -93,6 +94,51 @@
 - `foray_platform_hal` 从 interface 转为普通库；
 - `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
 - 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
+
+### M6+ 相机配置扩展（2026-10-24，已完成）
+
+- 目标：上游 robots 仓只写 conf，就能覆盖相机的设备选择、几何、采集、触发、传输、
+  缓冲与时间语义；设计见 [docs/camera_config.md](docs/camera_config.md)；
+- `hal/types.hpp` 新增 `AutoMode` / `TimestampSource`；`CameraConfig` 扩到 40 个键，
+  新增 binning/decimation、自动曝光/增益及其上下限、包长/包间隔/心跳、
+  帧池内存上限、`timestamp_source`；`TriggerConfig` 增加显式 `source`；
+- `ParamManager` 增加变更监听：`add_change_listener` / `remove_change_listener`、
+  `ParamChange`、`diff_snapshots` 增量比对、锁外派发、回调异常隔离；
+- `Camera` 新增非纯虚 `apply(CameraTuning)` / `trigger()` / `supported_keys()`，
+  子类不实现也能编译（默认 `kNotSupported`）；
+- 单测：`config_binder_test` +5、`manager_test` +5，全套 163 个用例通过；
+- 未做：驱动侧填充 `supported_keys()`、`SensorInfo` 补同步可观测字段。
+
+### M7/M8 交付物（Hikvision）（2026-10-24，已完成）
+
+设计与取舍见 [docs/driver_hikvision.md](docs/driver_hikvision.md)。
+- 隔离方式沿用 Livox：`detail::MvsApi` 虚接口，`src/hikvision/mvs_api_real.cpp`
+  是唯一 include `MvCameraControl.h` 的翻译单元；公共头只有 HAL 类型；
+  `FORAY_BUILD_DRIVER_HIKVISION=ON/OFF` + `FORAY_MVS_ROOT`，ON 找不到 SDK 直接
+  `FATAL_ERROR`；core/backend 两个 OBJECT 目标，mock 测试不链 MVS。
+- 取流模型不同于 Livox：`MV_CC_GetImageBuffer` 是阻塞调用，取流线程即生产者，
+  链路为 `GetImageBuffer → memcpy 到 FramePool → FreeImageBuffer`（同线程），
+  不需要原始包环与解析线程；超时 100 ms 走正常控制流，不 `sleep` 轮询。
+- 设备选择严格按 HAL 约定（serial > user_defined_name > model+index > ip）：
+  空 selector 返回 `kInvalidArgument`，多候选返回 `kDeviceAmbiguous`，不默认取第 0 个；
+  枚举结果按 serial 去重（主机双 IP 会让同一相机出现两次）。
+- 时间戳：只用 `nDevTimeStampHigh/Low` + 标定偏移和/或主机接收时刻；
+  `nHostTimeStamp` 单位未定义，不使用。
+- 已完成：
+  - HAL 参数缺口 1/2/3 已补齐（`device_to_host_offset_ns` /
+    `exposure_to_host_latency_ns`、`trigger.debounce_us` 进 schema 与 binder）；
+  - `foray_platform_driver_hikvision/`：公共工厂、生命周期与取流、节点映射、
+    时间换算、错误映射、stub 与真实后端（`mvs_api_real.cpp`）；
+  - 81 个单测（生命周期 / 配置映射顺序 / 时间三路径 / 超时与掉线 / 帧池计数 /
+    后端能力），`FORAY_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全绿；
+  - `foray_hikvision_dump`：配置 + 取 N 帧 + 帧率/丢帧统计 + 软触发循环；
+  - `foray_hikvision_dump --view`（2026-10-25）：构建期找到 SDL2 时开窗口
+    实时预览，保持原始宽高比、首帧到达后才建窗，ESC/q/关窗即停流；
+    合成棋盘帧截屏采样验证无偏色且 4:3 不拉伸；
+  - 实机 HIL（MV-CS004-10GC）：720×540 @ 118–127 Hz，200 帧 0 丢包，
+    ROI 640×480、曝光/增益下发、软触发均验证通过。
+- 仍未做：拔插恢复的实机验证（`recover()` 退避逻辑有单测覆盖）、30 分钟长跑；
+  部署步骤补进 `docs/driver_deployment.md` §4 也待办。
 
 ### M9/M10 交付物（Livox）
 
