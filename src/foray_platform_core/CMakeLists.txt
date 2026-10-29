@@ -76,6 +76,28 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(foray_platform_net PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_library(foray_platform_link
+    src/link/usb_cdc_port.cpp
+    src/link/robolink_crc.cpp
+    src/link/robolink_frame.cpp
+    src/link/robolink_frame_parser.cpp
+    src/link/robolink_codec.cpp
+    src/link/robolink_byte_channel.cpp
+    src/link/robolink_host_link.cpp
+)
+add_library(foray_platform::link ALIAS foray_platform_link)
+set_target_properties(foray_platform_link PROPERTIES EXPORT_NAME link)
+target_include_directories(foray_platform_link
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_link_libraries(foray_platform_link PUBLIC foray_platform_core)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(foray_platform_link PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 target_include_directories(foray_platform_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -119,9 +141,17 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/net/setup_test.cpp
         test/net/nm_backend_test.cpp
         test/net/bootstrap_test.cpp
+        test/link/usb_cdc_port_test.cpp
+        test/link/robolink_crc_test.cpp
+        test/link/robolink_frame_test.cpp
+        test/link/robolink_frame_parser_test.cpp
+        test/link/robolink_codec_test.cpp
+        test/link/robolink_byte_channel_test.cpp
+        test/link/robolink_host_link_test.cpp
     )
     target_link_libraries(foray_platform_tests
-        PRIVATE foray_platform_net foray_platform_hal foray_platform_core GTest::gtest_main
+        PRIVATE foray_platform_link foray_platform_net foray_platform_hal
+                foray_platform_core GTest::gtest_main
     )
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -155,7 +185,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.foray.netconfig.policy
 install(FILES data/polkit/60-foray-netconfig.rules
     DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/rules.d)
 
-install(TARGETS foray_platform_core foray_platform_hal foray_platform_net
+install(TARGETS foray_platform_core foray_platform_hal foray_platform_net foray_platform_link
     EXPORT foray_platform_coreTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

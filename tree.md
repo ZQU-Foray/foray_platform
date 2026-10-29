@@ -32,7 +32,8 @@
 │   ├── camera_config.md         相机配置键空间、分级与动态参数契约
 │   ├── driver_deployment.md     SDK2 / 网络 / PPS-PTP 部署
 │   ├── net_bootstrap.md         特权网络自举与 polkit 动作
-│   └── sdk_packaging_survey.md  厂商相机 SDK 打包与调用横评
+│   ├── sdk_packaging_survey.md  厂商相机 SDK 打包与调用横评
+│   └── robolink_protocol_review.md  候选 RoboLink 线协议对账（待电控逐字节确认）
 ├── src/
 │   ├── foray_platform_core/     合并包：L1 core + L2 hal（不依赖 ROS）
 │   │   ├── CMakeLists.txt
@@ -45,13 +46,15 @@
 │   │   │   ├── result/          ErrorCode · Error · Result<T>
 │   │   │   ├── container/       有界 SPSC 队列（header-only）
 │   │   │   ├── config/          document · resolver · snapshot · exporter · tool
-│   │   │   └── hal/             Device · Camera · Lidar · 帧 · FrameLease/FramePool · ConfigBinder
+│   │   │   ├── hal/             Device · Camera · Lidar · 帧 · FrameLease/FramePool · ConfigBinder
+│   │   │   └── link/            UsbCdcPort · CRC · 组帧 · 帧解析 · 消息编解码 · HostLink
 │   │   ├── src/
 │   │   │   ├── time/clock.cpp
 │   │   │   ├── param/           实现、内部校验与 YAML 工具
 │   │   │   ├── result/error.cpp
 │   │   │   ├── config/          resolver · exporter · tool
 │   │   │   ├── net/             probe · process · NM/netlink 后端 · plan/ensure_link · bootstrap
+│   │   │   ├── link/            USB CDC 设备 · CRC-32 · 帧/字节流 · 编解码 · 主机链路
 │   │   │   └── hal/config_binder.cpp
 │   │   ├── test/
 │   │   │   ├── time/            时钟单测
@@ -60,6 +63,7 @@
 │   │   │   ├── container/       SPSC 队列单测
 │   │   │   ├── config/          分层 / include / env / 导出单测
 │   │   │   ├── net/             MTU / 计划 / 回滚 / 跨桥 / bootstrap 单测
+│   │   │   ├── link/            设备生命周期 · CRC · 组帧 · 解析 · 编解码 · 链路单测
 │   │   │   └── hal/             类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
 │   │   ├── apps/foray_net_helper.cpp  特权网络自举 helper（pkexec）
 │   │   └── data/polkit/         polkit 动作与可选免密规则
@@ -116,7 +120,8 @@
         └── ci.yml               组织 CI 模板 + 目录规范 lint
 ```
 
-> L2 HAL（同包 `hal` target）已落地；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
+> L2 HAL（同包 `hal` target）已落地；`link` target 的 USB CDC 与候选 RoboLink 编解码、主机链路
+> 已离线全绿（尚无装配程序，未与 MCU 固件联调）；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
 > Hikvision 驱动已落地（mock 全绿，MV-CS004-10GC 实机取流已验证）；ROS 适配层按计划加入。
 
 ## 目录职责

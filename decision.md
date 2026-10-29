@@ -586,6 +586,77 @@ Rejected:
 - 继续调用 `shared_from_this()`：违反契约时进程直接终止，与 `noexcept`
   声明和「公共 API 不抛异常」的约定冲突。
 
+---
+
+## Decision
+
+Date: 2026-10-19
+
+Context: 需要将 PC 端 USB CDC 设备访问与视觉算法、RoboLink 消息语义分离，
+并在未连接硬件时验证基础生命周期。
+
+Decision: 在平台仓建立独立的 `UsbCdcPort` 设备层及无硬件测试；设备层只管理
+路径与文件描述符，不处理云台目标或协议帧。
+
+Reason: 平台仓 README 将 USB/串口归为下行设备抽象；无硬件测试可验证
+打开失败、重复打开、关闭后重开，而不驱动执行器。
+
+---
+
+## Decision
+
+Date: 2026-10-21
+
+Context: `foray_interfaces` 的 `dev` 分支消息表为空，RoboLink 仅在候选文档分支；
+两者的时间戳与消息号约定冲突，电控公开分支未见 RoboLink 解析器。
+
+Decision:
+- 先验证与协议无关的 USB CDC 原始字节通道；随后按候选 RoboLink 文档**离线**实现
+  帧与消息载荷编解码，供 Draft PR 评审，不接入真实控制路径；
+- 双组确认帧格式、消息表、姿态反馈与失联动作后，再按正式契约调整；
+- 视觉内部角度保持 rad，按组长答复在协议适配边界转 deg——后续（2026-10-24）
+  改为线上直接使用 rad，见下文；
+- 候选实现落在 `foray::platform::link`：`usb_cdc_port` · `robolink_crc` ·
+  `robolink_frame` · `robolink_frame_parser` · `robolink_codec` ·
+  `robolink_byte_channel` · `robolink_host_link`，同包 `link` target 导出
+  `foray_platform::link`。
+
+Reason: 字节传输通过不代表下位机理解帧，更不能据此驱动云台或发射机构。
+
+Verification: 零槽保活帧用独立 `zlib.crc32` 黄金字节核对；它只证明 PC 侧按该候选
+格式组帧，不证明 MCU 固件识别或链路已联通。
+
+Frame parser: 接收层按字节流缓存任意读块，依候选格式的 Magic、头字段、长度和 CRC
+提取原始完整帧；不在此层解释 `CONTROL_SNAPSHOT` 或 `SYSTEM_STATUS`。坏头从魔数
+第二字节重扫，CRC 失败按候选规范丢弃该帧。解析器通过离线切分与恢复测试，
+不代表实机收发已验收。
+
+Message codec: 平台仓承载候选协议的显式小端序列化，实现零槽/单槽/多槽帧，
+以及控制快照、状态、握手、心跳、确认与错误载荷；不依赖 `foray_auto_aim`
+的内部类型。`RoboLinkByteChannel` 只保留一帧待发送并处理部分写入，
+不自动启用射击或控制。主机侧握手、心跳、状态回读、超时和重开已离线测试；
+发送频率验收、姿态反馈和实机联调仍未完成，不能据此宣称实机通讯闭环。
+
+Protocol audit: 2026-10-22 对照候选文档 §2.1/§3.1，修正握手、确认和错误消息的
+槽位类标志；PC `HELLO` 显式声明支持的消息能力位。控制帧的 Frame Seq、
+Message Seq 与 Control Seq 统一由主机链路分配，避免与心跳帧独立计数而冲突。
+离线测试仍不能证明 MCU 端已接入此协议。
+
+Update (2026-10-24): 按最新对接口径，云台目标角线上单位由 deg 改为 rad；
+平台控制字段与自瞄适配层同步更名，取消 rad→deg 转换。下位机将以四元数反馈姿态，
+但现有 RoboLink 消息表缺少对应布局；未收到消息类型、分量顺序、坐标系和时间戳
+定义前，不臆造线上四元数载荷。以上仍待电控逐字节对账与实机验收。
+
+Update (2026-10-24): `foray_interfaces` PR #2 已合入 v0.2 候选契约，明确
+0x30 `GIMBAL_ATTITUDE` 的 36 B 载荷、`w,x,y,z` 顺序、云台系到世界系及采样时刻。
+平台接收链新增能力位声明、字段解码与最新姿态缓存；无效位保留给消费者判断，
+不在平台层做坐标变换。仍需与 MCU 固件逐字节对账和实机验收。
+
+Follow-up: 接收缓存同时保存 MCU 帧头发送时刻和 PC 本机接收时刻，避免仅保留
+IMU 采样时刻后无法按 v0.2 §4.8 做时间对齐；这些时间属不同钟域，不在平台层
+直接相减。`SYSTEM_STATUS` 未知安全状态按 v0.2 §4.6 降级为控制失联。
+---
+
 ## Decision
 
 Date: 2026-10-24
