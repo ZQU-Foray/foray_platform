@@ -10,7 +10,7 @@ L1 平台基础 + L2 下行 HAL
 
 ## 快速开始
 
-> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform` 包，**不依赖 ROS**）。
+> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform_core` 包，**不依赖 ROS**）。
 > L2 HAL 与 ROS 适配层正在按计划落地。
 > `link` target 的 USB CDC 原始字节通道、候选 RoboLink 编解码与主机链路已离线全绿，
 > 但**未与 MCU 固件联调**，见下文 [link（候选协议）](#已实现但未经实机验收linkusb-cdc--候选-robolink)。
@@ -20,7 +20,7 @@ L1 平台基础 + L2 下行 HAL
 依赖：CMake ≥ 3.16、C++17 编译器、yaml-cpp；测试另需 GTest。
 
 ```bash
-cmake -S foray_platform -B ~/.cache/foray-platform-build/platform \
+cmake -S src/foray_platform_core -B ~/.cache/foray-platform-build/platform \
       -DCMAKE_BUILD_TYPE=Release
 cmake --build ~/.cache/foray-platform-build/platform -j"$(nproc)"
 ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
@@ -34,7 +34,7 @@ ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
 驱动包默认 **不依赖 SDK**，用 stub 构建并跑 mock 测试：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=OFF
 cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
@@ -45,7 +45,7 @@ ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
 `foray_ws/scripts/build_livox_sdk2.sh` 完成），再打开开关：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \
       -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
@@ -93,7 +93,7 @@ colcon test --event-handlers console_direct+
 ## 接口
 
 > 本仓是 **C++ 库**，不是 ROS 节点。这里的「接口」指**公共 C++ API**；
-> `foray_platform` 的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
+> `foray_platform_core` 包的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
 > `foray_interfaces`（X2）定义；后续 ROS 适配层落地后再在本节补充话题/参数清单。
 >
 > 未冻结的接口只描述**契约方向**，不承诺具体签名。
@@ -202,17 +202,26 @@ Hikvision 驱动特性：
   构建期找到 SDL2 时还支持 `--view` 开窗口实时预览画面（可选依赖，
   找不到也不影响工具其余功能）。
 
-**雷达网络自举**：作为硬件抽象层的一部分，本仓必须能一键把物理网口挂进
-雷达网桥并配置主机地址，而不要求操作手现场 `sudo ip link`：
+**设备网络自举**：作为硬件抽象层的一部分，本仓必须能一键把雷达 / GigE 相机
+所在的物理网口挂进对应网桥、配置主机地址与巨帧 MTU，而不要求操作手现场
+`sudo ip link`：
 
-- 只读探测拓扑（`foray/platform/net/net_types.hpp`）→ 幂等规划
+- 只读探测拓扑（`foray/platform/net/net_types.hpp`，含 sysfs MTU）→ 幂等规划
   （`plan_link`）→ 授权执行（`ensure_link`，失败自动回滚）；
+- 编排层 `foray/platform/net/bootstrap.hpp` 由雷达与相机工具共用：非 root 自动
+  `pkexec` 调 `foray-net-helper`，链路已就绪则跳过；
 - NetworkManager 优先（创建 `foray-<iface>-slave` profile，重启不丢），
-  没有 NM 时回退 rtnetlink；
+  没有 NM 时回退 rtnetlink；两条路径都实现 `set_mtu`；
+- 物理口已属于另一个网桥时默认拒绝，避免把雷达口从 `br-lidar` 静默抢走；
+  确需迁移时显式传 `--allow-reassign-master`；
+- MTU 设置失败只 warning 不阻断：GigE 720×540@125 Hz 在 1500 下实测可跑，
+  9014 是推荐值而非硬前提；
 - 特权只来自 polkit：`foray-net-helper` 装到 libexec，动作
   `org.foray.netconfig.bootstrap` 只放行该程序；
 - 雷达参数下发走 `foray_livox_config`，默认只读回校验，`--set-lidar-ip`
-  等显式开关才改写，写后必读回。
+  等显式开关才改写，写后必读回；
+- USB3 相机的协议级自举（USB3 Vision 控制通道）尚未实现，
+  `foray_hikvision_up --transport usb3` 目前只做可见性检测并打印 TODO。
 
 **急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
 位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，

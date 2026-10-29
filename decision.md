@@ -731,3 +731,102 @@ Rejected:
   且「设了但不生效」的自动模式陷阱没有出口；
 - 在 `Viewer::show()` 里做 per-frame 直方图均衡：每帧 720×540 的统计开销会
   挤占 126 Hz 的取流节奏，且与「看真实画面」的目标冲突。
+
+## 2026-10-25 设备网络自举：MTU 进后端、跨桥默认拒绝、编排上移
+
+Date: 2026-10-25
+
+Context: Hikvision GigE 相机要求「插上相机 → 一条命令 → 出图」，但网络编排
+锁在 `foray_lidar_up` 内部，相机无法复用；全仓此前没有任何 MTU 能力，而
+`br-lidar` 与 `br-camera` 会同时存在，旧的 `set_slave` 会静默把物理口从
+另一个桥抢走，导致另一台设备无声掉线。
+
+Decision:
+- MTU 作为一等能力放进 `NetBackend::set_mtu` 与 `NetIntent::mtu`，NM 写
+  `802-3-ethernet.mtu`、netlink 写 `IFLA_MTU`，探测侧由 sysfs 读入
+  `InterfaceInfo::mtu`（读不到为 0，表示未知而不是 1500）；
+- `plan_link` 的动作序把 MTU 放在 `set_up` 之后、地址之前，且物理口先于网桥
+  （Linux 要求 slave MTU ≥ master）；MTU 失败只记 warning 不阻断；
+- 物理口已属另一桥时 `plan_link` 默认返回 `kInvalidArgument`，
+  `allow_reassign_master` / `--allow-reassign-master` 才放行；
+- 把 `foray_lidar_up` 的 bootstrap 段上移到 `net/bootstrap.hpp`，雷达与相机
+  共用同一套 pkexec/就绪判定/退出码映射；相机独占 `br-camera`，不与雷达共桥；
+- 相机地址按 RFC 3927 规划：桥上已有 `169.254/16` 就复用，否则取
+  `169.254.x/16`；固定 IP 相机取同 `/24` 的 `.1`（冲突用 `.254`）；
+- USB3 只做可见性检测并打印 TODO，协议级自举留到后续单元。
+
+Reason:
+- MTU 失败不阻断：2026-10-25 实测 720×540@125 Hz 在 1500 下可正常出图，
+  9014 是推荐值；若把 MTU 当硬门槛，不支持巨帧的 USB 网卡会直接挡住取流；
+- 跨桥默认拒绝：现场两个桥各自承载一台设备，静默抢占的代价是另一台设备
+  掉线且没有提示，比多敲一个开关危险得多；
+- 编排上移：雷达与相机的差异只在地址规划与驱动启动，探测/规划/授权/回滚
+  完全同构，复制一份必然分叉；
+- 相机独占桥：nmcli 拉起桥会短暂断链，共桥会把雷达的取流一起震断。
+
+Alternatives:
+- 在 `foray_hikvision_up` 里复制一份 lidar_up 的 argv 拼装：短期快，但
+  helper 参数、退出码、pkexec 语义会随两边演进分叉；
+- 把 MTU 直接放进 `set_up` 的参数：会破坏 `set_up` 的幂等语义，也无法表达
+  「物理口与网桥分别设置」；
+- 让相机复用 `br-lidar`：省一个桥，但 NM 激活桥时的链路抖动会同时影响雷达。
+
+Rejected:
+- 跨桥静默抢占：已发生过雷达口被抢的现场风险，不能再保留；
+- 在相机工具里用 shell 调 `ip link set mtu`：绕过 polkit 白名单与回滚；
+- USB3 先做半套控制通道：没有 USB3 Vision 协议栈时只能猜寄存器，
+  不如明确 TODO 并保持可检测。
+
+## 2026-10-25 目录布局与包命名规范化（src/ 布局 + `_core` 更名 + 资产归位）
+
+Date: 2026-10-25
+
+Context: 三个包平铺在仓根，核心包目录名与仓名同为 `foray_platform`，路径出现
+`foray_platform/foray_platform/include/...` 的 stutter；`tools/` 在 core 里指 C++ 特权
+helper、在 `foray_localization` 里却指 Python 包；polkit 资产埋在 `deploy/` 无统一落点。
+`foray_localization` 同期已采用「仓根 = 空间根 + 包平铺」的另一套命名（`_core` 后缀），
+两仓规则不一致。
+
+Decision:
+- 仓根作为 colcon 空间根，**全部源码包迁入 `src/`**；仓根只保留文档五件套、`docs/`、
+  `.github/` 与构建产物目录（`build/`、`install/`、`log/`，不入库）；
+- 核心包更名 `foray_platform` → **`foray_platform_core`**：`package.xml` 名、CMake
+  `project()`、包配置导出文件名（`foray_platform_coreConfig.cmake` / `…Targets.cmake`）
+  同步；两个驱动改为 `find_package(foray_platform_core REQUIRED)`；
+- **导出命名空间保持 `foray_platform::core|hal|net|driver_*` 不变**，驱动与下游的
+  `target_link_libraries` 无需修改；
+- 包内骨架固定：`include/ src/ test/ cmake/ launch/ config/ scripts/ apps/ data/`；
+  C++ 可执行小工具统一进 **`apps/`**（core 的 `foray_net_helper.cpp` 与两个驱动的
+  `camera_dump` / `camera_up` / `viewer` / `livox_dump` / `livox_config` / `lidar_up`）；
+  非源码资产（polkit 动作与免密规则）进 **`data/polkit/`**；
+- 新增 CI 作业 `dir-layout`：校验「包不得平铺在仓根」「`src/` 下包名与目录名一致」
+  「工程包必须有 `include/` 与 `test/`」「包内不得再用 `tools/`」（脚本类包豁免）。
+
+Reason:
+- 包名与仓名相同会让 `repo/repo/` 路径在所有日志、`install/` 树、报错栈里重复出现，
+  而仓内已无第二个同名实体可作为区分；
+- 与 `foray_localization` 的 `_core` 后缀对齐后，两仓「核心包叫什么」不再是一个需要
+  现场决策的问题；把规则写进 CI 才能防止下次又漂；
+- `tools/` 一词同时表示「C++ 可执行小工具」和「Python 离线工具包」，是本仓与
+  localization 之间最容易误读的一处；按「可执行 → `apps/`，脚本包 → `_tools`」切分；
+- polkit 动作与免密规则属于安装资产而非源码，放进 `data/` 后 `install` 规则与
+  `tree.md` 都能一句话说清其归属；
+- 命名空间不动是刻意取舍：`foray_platform::hal` 已被两个驱动和后续 ROS 适配层引用，
+  为一次目录重构改它，收益小于让下游全部改链接。
+
+Alternatives:
+- 保持包平铺、只把核心包改名：解决 stutter 但 `src/` 缺失，构建产物与源码仍在同一层；
+- 同时把命名空间改为 `foray_platform_core::`：语义更自洽，但要改全部驱动与下游链接，
+  且 ament 生态里「包名 ≠ 命名空间」很常见；
+- 把 `net` 子系统拆成独立包 `foray_platform_net`：当前 6 个源文件、单一 owner，
+  拆分只为名字好看，不值得多一次跨包链接与版本协调。
+
+Rejected:
+- 继续用 `tools/` 承载可执行小工具（与 localization 的 `_tools` 包语义冲突，且
+  `.gitignore` 里没有对应豁免规则）；
+- 把 polkit 资产留在包根 `deploy/`（仓根已无 `deploy/` 约定，包内也无同类先例）；
+- 让 `foray_platform_core` 的库 target 同时改名为 `core`：收益仅是少一次前缀，
+  却要让 core 内全部测试与 `foray_platform::core` 别名一起动。
+
+## 已确认遗留
+- `package.xml` 的 `<license>` 仍为 `TODO`，等组织确认许可证（与本决策无关）。

@@ -23,46 +23,46 @@
 
 ### 任务 1 交付物
 
-- `foray_platform/include/foray/platform/time/`
+- `src/foray_platform_core/include/foray/platform/time/`
   - `Duration` / `Timestamp` 强类型；
   - `Clock` 接口 + `SystemClock` / `SteadyClock` / `ManualClock`；
   - 三个时钟域与 `use_sim_time` 就绪/跳变语义；
 - 设计说明：[docs/time_and_clock.md](docs/time_and_clock.md)；
-- 单测：`foray_platform/test/time/clock_test.cpp`。
+- 单测：`src/foray_platform_core/test/time/clock_test.cpp`。
 
 ### 任务 2 交付物
 
-- `foray_platform/include/foray/platform/param/`
+- `src/foray_platform_core/include/foray/platform/param/`
   - 类型化 schema、声明校验、范围/枚举校验；
   - 不可变快照 + 原子替换的存储；
   - 多来源分层（对应 `shared.yaml` + `<robot>.yaml`）；
   - YAML 文件来源（严格未知键、按 schema 解析类型）；
   - 初始加载 / 热加载门面，整批原子生效；
 - 设计说明：[docs/parameter_system.md](docs/parameter_system.md)；
-- 单测：`foray_platform/test/param/`。
+- 单测：`src/foray_platform_core/test/param/`。
 
 ### M1 交付物（HAL 前置）
 
 - 包合并：`foray_platform_core/` → `foray_platform/`；
   `foray_platform_core` 与后续 `foray_platform_hal` 为同包两个 target；
-- `foray_platform/include/foray/platform/result/`
+- `src/foray_platform_core/include/foray/platform/result/`
   - `ErrorCode` / `Error` / `Result<T>` / `Result<void>`；
   - 驱动原始错误码保留在 `Error::vendor_code`；
-- 单测：`foray_platform/test/result/result_test.cpp`；
+- 单测：`src/foray_platform_core/test/result/result_test.cpp`；
 - 决策记录：`decision.md` 的包合并、配置栈归属、通用错误类型条目。
 
 ### M2 交付物
 
-- `foray_platform/include/foray/platform/container/spsc_queue.hpp`
+- `src/foray_platform_core/include/foray/platform/container/spsc_queue.hpp`
   - 有界、无锁、单生产者/单消费者；
   - 容量向上取 2 的幂；满时 `try_push` 返回 false 并累计 `dropped()`；
   - `T` 要求可默认构造、移动构造/赋值不抛异常；
-- 单测：`foray_platform/test/container/spsc_queue_test.cpp`；
+- 单测：`src/foray_platform_core/test/container/spsc_queue_test.cpp`；
 - TSan 并发用例通过。
 
 ### M3 交付物
 
-- `foray_platform/include/foray/platform/config/`
+- `src/foray_platform_core/include/foray/platform/config/`
   - `ConfigDocument` / `ConfigLayer`：分层与可选层；
   - `ConfigResolver`：YAML 加载、顶层 `include`、`${ENV}` 替换、
     `FORAY_<PARAM>` 覆盖、来源追踪；
@@ -71,11 +71,11 @@
   - `ConfigTool`：validate/dump/schema 门面（可执行文件待 HAL schema 落地）；
 - 复用 `param` 的 `ParamSchema` / `ParamValue` / `ParamStore` 做校验与宽化；
 - 设计说明：[docs/config_stack.md](docs/config_stack.md)；
-- 单测：`foray_platform/test/config/`；ASan/UBSan 通过。
+- 单测：`src/foray_platform_core/test/config/`；ASan/UBSan 通过。
 
 ### M4/M5 交付物
 
-- `foray_platform/include/foray/platform/hal/`
+- `src/foray_platform_core/include/foray/platform/hal/`
   - `Device` / `Camera` / `Lidar` 生命周期与读取接口；
   - `ImageFrame` / `PointCloudFrame` / `ImuSample` / `TimestampSync`；
   - `CameraConfig` / `LidarConfig` / `DeviceSelector` / `TriggerConfig`；
@@ -87,7 +87,7 @@
 
 ### M6 交付物
 
-- `foray_platform/include/foray/platform/hal/config_binder.hpp`
+- `src/foray_platform_core/include/foray/platform/hal/config_binder.hpp`
   - `make_camera_param_schema()` / `make_lidar_param_schema()`；
   - `bind_camera_config()` / `bind_lidar_config()`；
   - 跨字段约束：transport 与 serial/ip、trigger 与 frame_rate、像素格式支持；
@@ -127,7 +127,7 @@
 - 已完成：
   - HAL 参数缺口 1/2/3 已补齐（`device_to_host_offset_ns` /
     `exposure_to_host_latency_ns`、`trigger.debounce_us` 进 schema 与 binder）；
-  - `foray_platform_driver_hikvision/`：公共工厂、生命周期与取流、节点映射、
+  - `src/foray_platform_driver_hikvision/`：公共工厂、生命周期与取流、节点映射、
     时间换算、错误映射、stub 与真实后端（`mvs_api_real.cpp`）；
   - 81 个单测（生命周期 / 配置映射顺序 / 时间三路径 / 超时与掉线 / 帧池计数 /
     后端能力），`FORAY_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全绿；
@@ -142,7 +142,7 @@
 
 ### M9/M10 交付物（Livox）
 
-- `foray_platform_driver_livox/`（纯 CMake，不依赖 ROS）
+- `src/foray_platform_driver_livox/`（纯 CMake，不依赖 ROS）
   - 公共工厂 `driver::livox::make_lidar(const hal::LidarConfig&)`，公共头无 SDK 类型；
   - `livox_api.hpp` 函数表抽象 + stub/真实实现，`FORAY_BUILD_DRIVER_LIVOX` 开关；
   - `LivoxRuntime`：进程级 SDK 引用计数、handle 路由、sink 墓地；
@@ -172,12 +172,12 @@
 
 ### M11 交付物（雷达网络自举与参数注入）
 
-- `foray_platform/include/foray/platform/net/`
+- `src/foray_platform_core/include/foray/platform/net/`
   - `net_types.hpp`：`Ipv4` / `InterfaceInfo` / `Topology` / 只读 `probe_topology()`；
   - `process.hpp`：`ProcessRunner` 抽象（不经过 shell）；
   - `backend.hpp` + `nm_backend.hpp` + `netlink_backend.hpp`：NM 优先、netlink 回退；
   - `setup.hpp`：`plan_link()` 纯规划、`ensure_link()` 执行 + 逆序回滚、`select_backend()`；
-- `foray_platform/tools/foray_net_helper.cpp`：libexec helper，参数白名单，
+- `src/foray_platform_core/apps/foray_net_helper.cpp`：libexec helper，参数白名单，
   polkit 动作 `org.foray.netconfig.bootstrap` 只放行该程序；
 - 驱动控制面：`LivoxApi` 增 set_lidar_ip / set_install_attitude / set_pps_sync_mode /
   set_host_port_cfg / set_rmc_sync_time / query_internal_info；`LivoxControl`
@@ -208,9 +208,44 @@
 - 文档：[docs/robolink_protocol_review.md](docs/robolink_protocol_review.md)；
 - **未完成**：与 MCU 固件逐字节对账、发送频率/延迟验收、实机联调、失联动作验收。
 
+### M13 交付物（设备网络自举：Hikvision GigE + MTU + 跨桥保护）
+
+- `net` 层：`InterfaceInfo::mtu`（sysfs 读，0=未知）、`NetBackend::set_mtu`
+  （NM 走 `802-3-ethernet.mtu`，netlink 走 `IFLA_MTU`）；
+- `plan_link`：动作序加 `set_mtu(物理口) → set_mtu(网桥)`，MTU 失败只 warning；
+  物理口已属另一桥时默认 `kInvalidArgument`，`allow_reassign_master` 显式放行；
+- `link_ready`：`(topology, iface, bridge, host_ip=nullopt, min_prefix=16,
+  min_mtu=nullopt)`，空地址只校验挂桥/载波，MTU 0 视为未知；
+- `net/bootstrap.hpp`：`bootstrap_link()` 编排（探拓扑 → 判就绪 → pkexec →
+  helper），雷达与相机共用；`foray_lidar_up` 删除本地拼装，改为调用它；
+- `foray-net-helper`：新增 `--mtu 576-65535` 与 `--allow-reassign-master`；
+- Hikvision：`camera_bootstrap`（LLA/同网段地址规划）、
+  `foray_hikvision_up`（挂 `br-camera` → 地址 → MTU → 枚举 → 取 3 帧），
+  USB3 只做可见性检测 + TODO；
+- 文档：[docs/net_bootstrap.md](docs/net_bootstrap.md) 去雷达限定，
+  `docs/driver_deployment.md` §2 加桥隔离/MTU、§4 加一键自举与 USB3 TODO；
+- 单测：平台 178 个用例（net MTU / 跨桥 / bootstrap），Hikvision 88 个
+  （新增地址规划 5 个），Livox 36 个回归全绿；
+- **待 HIL**：相机口 `enp0s13f0u1` 的实机自举与取帧（需现场授权改网络）。
+
+### M14 交付物（目录布局与包命名规范化）
+
+- 仓根 = colcon 空间根：三个包迁入 `src/`，仓根只保留文档五件套、`docs/`、`.github/`
+  与构建产物目录（`build/`、`install/`、`log/`，不入库）；
+- 核心包更名 `foray_platform_core`（`package.xml` 名 / CMake `project()` / 包配置导出
+  文件名），`find_package(foray_platform_core)` 供两个驱动与后续 ROS 适配层消费；
+  **导出命名空间仍为 `foray_platform::core|hal|net`**，下游链接不变；
+- 包内骨架固化：C++ 可执行小工具进 `apps/`（core `foray_net_helper`；hikvision
+  `camera_dump`/`camera_up`/`viewer`；livox `livox_dump`/`livox_config`/`lidar_up`），
+  polkit 动作与免密规则进 `data/polkit/`，包内不再有 `tools/`；
+- `README.md`、`tree.md`、`docs/**` 的路径与包名同步；
+- CI 新增 `dir-layout`：包不得平铺仓根、`src/` 下包名须与目录一致、工程包须有
+  `include/` + `test/`、包内禁用 `tools/`（脚本类包豁免）；
+- 决策留痕：[decision.md](decision.md)「2026-10-25 目录布局与包命名规范化」。
+
 ## 当前 Agent State
 
-M11_NET_BOOTSTRAP_DONE + HOST_LINK_V02_OFFLINE_TESTED（实机 HIL 待雷达恢复连接；RoboLink 仅离线验收，未接真机）
+M14_LAYOUT_REFACTOR_DONE + HOST_LINK_V02_OFFLINE_TESTED（目录规范化完成；M13 设备网络自举的实机 HIL 仍待现场授权；RoboLink 仅离线验收，未接真机）
 
 ## Before Snapshot
 

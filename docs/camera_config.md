@@ -1,6 +1,6 @@
 # 相机配置架构：键空间、分级与动态参数
 
-> 适用范围：`foray_platform` 的 HAL 相机层，以及 `foray_platform_driver_livox` /
+> 适用范围：`foray_platform_core` 包的 HAL 相机层，以及 `foray_platform_driver_livox` /
 > `foray_platform_driver_hikvision` 两个驱动包。
 > 目标读者：上游 `robots` 仓的配置编写者、驱动实现者。
 

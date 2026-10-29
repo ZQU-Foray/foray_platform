@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>foray_platform_core</name>
+  <version>0.1.0</version>
+  <description>L1 平台基础（时间/参数/配置/错误码）+ L2 下行 HAL（设备/传感器抽象）。</description>
+
+  <maintainer email="2077987156@qq.com">RyanZ</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <depend>yaml-cpp</depend>
+
+  <test_depend>gtest</test_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>
