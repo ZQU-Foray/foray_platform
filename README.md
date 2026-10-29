@@ -12,6 +12,8 @@ L1 平台基础 + L2 下行 HAL
 
 > 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform` 包，**不依赖 ROS**）。
 > L2 HAL 与 ROS 适配层正在按计划落地。
+> `link` target 的 USB CDC 原始字节通道、候选 RoboLink 编解码与主机链路已离线全绿，
+> 但**未与 MCU 固件联调**，见下文 [link（候选协议）](#已实现但未经实机验收linkusb-cdc--候选-robolink)。
 
 ### 仅构建核心库（无需 ROS）
 
@@ -127,6 +129,31 @@ colcon test --event-handlers console_direct+
 | 日志/录制/回放 | X4 底座：日志、录制、回放接口 | 未开始 |
 | 状态编码器 | 纯函数，训练与部署共用 | 未开始 |
 
+### 已实现但未经实机验收：`link`（USB CDC + 候选 RoboLink）
+
+> **协议未冻结。** 帧格式与消息表以 `foray_interfaces` 最终契约和电控逐字节对账为准；
+> 现有实现只供离线测试与 Draft PR 评审，**不得据此驱动云台或发射机构**。
+
+| 头文件 | 命名空间 | 公共类型 / 函数 | 契约 |
+|---|---|---|---|
+| `foray/platform/link/usb_cdc_port.hpp` | `foray::platform::link` | `UsbCdcPort` | 只管理设备路径与文件描述符：`open` / `close` / 重开 + 原始字节读写，不解释协议帧 |
+| `foray/platform/link/robolink_crc.hpp` | `foray::platform::link` | `crc32_iso_hdlc` | CRC-32/ISO-HDLC（标准校验值 `0xCBF43926`） |
+| `foray/platform/link/robolink_frame.hpp` · `robolink_frame_parser.hpp` | `foray::platform::link` | `make_keepalive_frame` · `RoboLinkFrameParser` | 零槽保活组帧；字节流按 Magic + 头字段 + 长度 + CRC 切帧，坏头从魔数第二字节重扫，CRC 失败丢该帧 |
+| `foray/platform/link/robolink_codec.hpp` | `foray::platform::link` | `encode_frame` / `decode_frame` · `encode_/decode_single_slot_frame` · `RoboLinkSlot` · `ControlSnapshot` · `SystemStatus` · `SystemDiagnostics` · `GimbalAttitude` · `Hello` / `HelloAck` / `Ack` / `ErrorMessage` | 显式小端序列化，零槽/单槽/多槽三类帧与八类载荷；不依赖 `foray_auto_aim` 内部类型 |
+| `foray/platform/link/robolink_byte_channel.hpp` | `foray::platform::link` | `RoboLinkByteChannel` | 只衔接设备与帧层：保留一帧待发送并处理部分写入，不做业务调度 |
+| `foray/platform/link/robolink_host_link.hpp` | `foray::platform::link` | `RoboLinkHostLink` · `HostLinkState` · `ReceivedGimbalAttitude` | 主机侧 `step(now_ms)` 非阻塞状态机：HELLO 握手、心跳、状态/姿态回读、500 ms 超时断开、设备重开与控制排队 |
+
+语义要点：
+
+- 线上角度统一 **rad**（不再做 rad→deg 适配）；`0x30 GIMBAL_ATTITUDE` 为 36 B，含采样时刻、
+  云台系到世界系 `w,x,y,z` 四元数、角速度、IMU 状态与有效位；
+- `ReceivedGimbalAttitude` 同时保留 MCU 帧头时间（`frame_timestamp_us`）与本机接收时刻
+  （`received_at_ms`）——两者属不同钟域，平台层**不相减**、不做坐标变换与时间插值；
+- `SYSTEM_STATUS` 未知安全状态按 v0.2 §4.6 降级为控制失联；
+- 排队成功 ≠ 电控接受或执行；本层无装配根可执行程序，未接入真实控制路径。
+
+论证与对账记录：[docs/robolink_protocol_review.md](docs/robolink_protocol_review.md)。
+
 ### L2 下行 HAL
 
 > 依赖倒置：抽象在本仓，具体驱动放本仓之下的插件目录；抽象层不得出现 ROS 类型。
@@ -137,7 +164,7 @@ colcon test --event-handlers console_direct+
 | 设备生命周期 | `open` / `close` / `recover` | `ERROR` 态尽量自修复；状态可查询 | **接口已实现** |
 | 传感器 | 激光 · IMU · 相机 | 只暴露类型化数据读取接口，不暴露厂商 SDK 类型 | **接口与帧池已实现**；驱动进行中 |
 | 执行器 | 底盘 · 云台 · 发射机构 | 指令 + 安全状态；内置超时归零 | 未开始 |
-| 总线 | 串口 · CAN · USB | 字节流/帧读写，设备无关 | 未开始 |
+| 总线 | 串口 · CAN · USB | 字节流/帧读写，设备无关 | **USB CDC 字节通道已实现**（`link/usb_cdc_port.hpp`，无硬件测试）；串口/CAN 未开始 |
 
 ### 驱动包
 
@@ -223,6 +250,7 @@ Hikvision 驱动特性：
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
 - [厂商 SDK 打包调研](docs/sdk_packaging_survey.md)——RM 战队如何打包与调用 MVS 等闭源相机 SDK（横评）
 - [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
+- [RoboLink 协议对账](docs/robolink_protocol_review.md)——候选线协议逐字段核对，待电控确认
 
 ## 参考
 
