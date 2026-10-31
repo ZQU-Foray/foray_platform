@@ -49,6 +49,7 @@ private:
     std::uint64_t last_hello_ms_ = 0;
     std::uint64_t next_open_ms_ = 0;
     std::uint16_t frame_seq_ = 0;
+    // 下一次 HELLO 要用的消息序号；每发一次 HELLO 自增，用于匹配 MCU 的回显。
     std::uint16_t hello_seq_ = 0;
     std::uint16_t control_message_seq_ = 0;
     std::uint32_t control_seq_ = 0;
