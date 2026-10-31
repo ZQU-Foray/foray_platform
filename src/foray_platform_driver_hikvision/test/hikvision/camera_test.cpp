@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -341,6 +342,48 @@ TEST(HikvisionCamera, CloseDestroysHandleEvenWhenCloseFails) {
     EXPECT_EQ(harness.api->close_calls.load(), 1);
     EXPECT_EQ(harness.api->destroy_calls.load(), 1);
     EXPECT_EQ(harness.camera->state(), hal::DeviceState::kClosed);
+}
+
+/// @brief H10：异常回调注册失败必须让 open() 失败，并把已拿到的句柄还回去。
+TEST(HikvisionCamera, OpenFailsWhenExceptionRegistrationFails) {
+    Harness harness;
+    harness.api->register_exception_error = detail::mvs_error::kHandle;
+    harness.make();
+    ASSERT_NE(harness.camera, nullptr);
+
+    const auto status = harness.camera->open();
+
+    EXPECT_FALSE(status.ok());
+    // MV_E_HANDLE 经 mvs_error 映射为 kInternal，原始码保留在 vendor_code 里。
+    EXPECT_EQ(status.error().code, ErrorCode::kInternal);
+    EXPECT_EQ(status.error().vendor_code, static_cast<std::int32_t>(detail::mvs_error::kHandle));
+    EXPECT_NE(status.error().message.find("MV_CC_RegisterExceptionCallBack"), std::string::npos);
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kClosed);
+    EXPECT_EQ(harness.api->register_exception_calls.load(), 1);
+    // 失败路径必须销毁句柄，不能留下悬挂设备。
+    EXPECT_EQ(harness.api->destroy_calls.load(), 1);
+}
+
+/// @brief H10：close() 期间 SDK 线程仍在触发异常回调，不得崩溃或读已释放内存。
+TEST(HikvisionCamera, CloseToleratesConcurrentExceptionCallback) {
+    Harness harness;
+    harness.stream_ok();
+
+    std::atomic<bool> stop{false};
+    std::thread firing([&harness, &stop] {
+        while (!stop.load(std::memory_order_acquire)) {
+            harness.api->fire_exception(detail::mvs_error::kUdpRecvData);
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+    });
+
+    const auto status = harness.camera->close();
+    stop.store(true, std::memory_order_release);
+    firing.join();
+
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kClosed);
+    EXPECT_EQ(harness.api->destroy_calls.load(), 1);
 }
 
 /// @brief close() 幂等，不得重复销毁句柄。

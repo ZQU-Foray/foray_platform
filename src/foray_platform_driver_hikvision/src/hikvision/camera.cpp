@@ -294,7 +294,12 @@ Result<void> CameraImpl::open_locked() {
         return fail(handle.error());
     }
     handle_ = handle.value();
-    api_->register_exception(handle_, &CameraImpl::on_exception, this);
+    // 注册异常回调失败必须让 open() 失败：没有回调就没有掉线自愈，
+    // 现场只会表现为"相机在用、recover() 永不触发"。
+    if (auto registered = api_->register_exception(handle_, &CameraImpl::on_exception, this);
+        !registered.ok()) {
+        return fail(registered.error());
+    }
 
     if (auto status = api_->open_device(handle_); !status.ok()) {
         return fail(status.error());
