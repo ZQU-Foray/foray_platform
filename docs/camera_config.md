@@ -138,7 +138,7 @@ hal::Camera（含 apply(CameraTuning)）  ← 运行期热改入口
 | `camera.device_to_host_offset_ns` | int | 空 | live | 设备→主机标定偏移 |
 | `camera.exposure_to_host_latency_ns` | double | 空 | live | 曝光→接收标定延迟 |
 | `camera.allow_unsynced_stamp` | bool | `true` | live | 无同步时是否允许主机时刻填充 |
-| `camera.frame_id` | string | `"camera"` | live | `ImageFrame::frame_id` |
+| `camera.frame_id` | string | `"camera"` | static | `ImageFrame::frame_id`（打开期固定：租约里的视图指向驱动内部存储，热改会悬垂） |
 
 `timestamp_source` 语义：
 - `auto`：PTP 从时钟在线 → 设备时间；否则按 `device_to_host_offset_ns` →

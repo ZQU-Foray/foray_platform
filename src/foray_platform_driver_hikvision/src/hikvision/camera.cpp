@@ -214,6 +214,8 @@ hal::DeviceState CameraImpl::state() const noexcept {
 }
 
 hal::SensorInfo CameraImpl::info() const {
+    // 审计 H9：`info_` 会被任何线程读，写侧在 open() 里，因此必须加锁拷贝。
+    std::lock_guard<std::mutex> lock(info_mutex_);
     return info_;
 }
 
@@ -303,9 +305,10 @@ Result<void> CameraImpl::open_locked() {
     }
 
     {
-        std::lock_guard<std::mutex> lock(tuning_mutex_);
-        info_ = build_info(selected.value());
-        info_.frame_id = frame_id_;
+        auto built = build_info(selected.value());
+        built.frame_id = frame_id_;
+        std::lock_guard<std::mutex> lock(info_mutex_);
+        info_ = std::move(built);
     }
 
     frames_received_.store(0, std::memory_order_relaxed);
@@ -608,7 +611,8 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     {
         std::lock_guard<std::mutex> lock(tuning_mutex_);
         timing = compute_timing(sample, timestamp_config_);
-        // frame_id_ 由同一把锁保护：string_view 必须在锁内取，否则会和 apply() 竞争。
+        // 审计 H9：frame_id_ 打开后不再改写（apply() 拒收该字段），这条视图
+        // 因此在整个租约期间都指向活着的存储。
         out.frame_id = frame_id_;
         exposure_hint = exposure_hint_us_;
         gain_hint = gain_hint_db_;
@@ -724,6 +728,15 @@ Result<void> CameraImpl::apply(const hal::CameraTuning& tuning) {
     if (tuning.empty()) {
         return Result<void>();
     }
+    // 审计 H9：`frame_id` 是打开期固定字段——已交付租约里的 `ImageFrame::frame_id`
+    // 指向 `frame_id_` 的存储，热改会让在手的租约变成悬垂视图。这里**整包拒绝**，
+    // 而不是悄悄忽略该字段后再应用其余字段（后者会让调用方以为 frame_id 生效了）。
+    if (tuning.frame_id.has_value()) {
+        return Result<void>(
+            make_error(ErrorCode::kNotSupported,
+                       "apply() 不支持热改 frame_id：已交付租约的 frame_id 视图指向驱动内部存储，"
+                       "该字段只能在 open() 前通过配置修改"));
+    }
     if (handle_ == nullptr) {
         return Result<void>(make_error(ErrorCode::kInternal, "相机句柄已释放，无法调参"));
     }
@@ -755,11 +768,6 @@ Result<void> CameraImpl::apply(const hal::CameraTuning& tuning) {
         if (tuning.allow_unsynced_stamp.has_value()) {
             timestamp_config_.allow_unsynced_stamp = *tuning.allow_unsynced_stamp;
             config_.allow_unsynced_stamp = *tuning.allow_unsynced_stamp;
-        }
-        if (tuning.frame_id.has_value()) {
-            frame_id_ = *tuning.frame_id;
-            config_.frame_id = *tuning.frame_id;
-            info_.frame_id = *tuning.frame_id;
         }
         // 这些字段 recover() 之后要沿用，所以同步回 config_。
         if (tuning.exposure_us.has_value()) {

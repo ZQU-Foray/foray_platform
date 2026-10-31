@@ -440,6 +440,9 @@ param::ParamSchema make_camera_param_schema() {
 
     param::ParamSpec frame_id =
         make_spec("camera.frame_id", param::ParamType::kString, param::ParamValue("camera"));
+    // 审计 H9：已交付租约的 `ImageFrame::frame_id` 是指向驱动内部存储的视图，
+    // 打开后热改会让在手的租约悬垂，因此与 `lidar.frame_id` 一样按打开期字段处理。
+    frame_id.hot_reloadable = false;
     add(schema, std::move(frame_id));
 
     return schema;

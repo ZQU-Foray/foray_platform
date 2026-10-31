@@ -447,6 +447,35 @@ TEST(HikvisionCamera, FrameCarriesTiming) {
     EXPECT_FALSE(frame.receive_stamp.is_zero());
 }
 
+/**
+ * @brief 审计 H9：`frame_id` 打开期固定，`apply()` 必须整包拒绝而不是悄悄忽略。
+ *
+ * 已交付租约的 `ImageFrame::frame_id` 是指向 `frame_id_` 存储的 `string_view`，
+ * 热改会让在手的租约变成悬垂视图。这条用例同时守住两件事：`apply()` 返回
+ * `kNotSupported`，以及旧租约的 id 读数仍然有效、内容未变（ASan 下即 UAF 检查）。
+ */
+TEST(HikvisionCamera, ApplyRejectsFrameIdChange) {
+    Harness harness;
+    harness.stream_ok();
+    harness.api->push_frame(make_frame(mono8_frame_info()));
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+    const std::string stable_id(lease->frame_id);
+    ASSERT_EQ(stable_id, harness.config.frame_id);
+
+    hal::CameraTuning tuning;
+    tuning.frame_id = std::string("changed_by_apply");
+    const auto status = harness.camera->apply(tuning);
+
+    ASSERT_FALSE(status.ok()) << "apply() 必须拒绝热改 frame_id";
+    EXPECT_EQ(status.error().code, ErrorCode::kNotSupported);
+    // 整包拒绝：相机状态与帧标识都不受影响。
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kStreaming);
+    EXPECT_EQ(lease->frame_id, stable_id);
+    EXPECT_EQ(harness.camera->info().frame_id, stable_id);
+}
+
 /// @brief 没有帧时 read() 超时，并累计 timeouts。
 TEST(HikvisionCamera, ReadTimesOutAndCounts) {
     Harness harness;

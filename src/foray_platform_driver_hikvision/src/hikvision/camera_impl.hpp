@@ -32,6 +32,11 @@ namespace foray::platform::driver::hikvision::detail {
  * 取值，两者**只能**通过 `frame_pool_snapshot()` / `set_frame_pool()` 访问，
  * 由 `pool_mutex_` 串行化。取流线程在 start/stop 之间独占访问 `pool_`
  * （`stop_locked()` 先 join 取流线程再释放池），因此不必加锁。
+ *
+ * 帧标识规则（审计 H9）：`frame_id_` 只在 `open_locked()` 里赋值一次，之后不可变；
+ * `apply()` 收到 `frame_id` 直接拒绝。已交付租约里的 `frame_id` 是它的
+ * `std::string_view`，这样做才能保证视图在整个租约期间有效。`info_` 由
+ * `info_mutex_` 保护，因为它可能被控制线程之外的线程读取。
  */
 class CameraImpl final : public hal::Camera {
   public:
@@ -122,11 +127,16 @@ class CameraImpl final : public hal::Camera {
     /// @brief 串行化控制接口与 `apply()`；取流线程不持有它。
     std::mutex control_mutex_;
 
-    /// @brief 保护 `timestamp_config_` / `frame_id_` / `exposure_us_` 等会被热改的字段。
+    /// @brief 保护 `timestamp_config_` 与曝光/增益 hint 等会被 `apply()` 热改的字段。
     std::mutex tuning_mutex_;
 
     TimestampConfig timestamp_config_;
 
+    /// @brief 帧标识；打开期由 `config_.frame_id` 赋值，之后**不再改变**（审计 H9）。
+    ///
+    /// 已交付的 `ImageFrame::frame_id` 是指向这份存储的 `std::string_view`，
+    /// 存储生命周期短于租约就是读已释放内存。因此 `apply()` 拒绝 `frame_id`，
+    /// 该成员只在 `open_locked()` 里写一次（此时取流线程尚未创建）。
     std::string frame_id_;
 
     /// @brief 设备当前曝光/增益的最近一次已知值（µs / dB）。
@@ -138,6 +148,9 @@ class CameraImpl final : public hal::Camera {
     float gain_hint_db_ = 0.0F;
 
     hal::SensorInfo info_;
+
+    /// @brief 保护 `info_`；`info()` 可能在任何线程被调用（审计 H9）。
+    mutable std::mutex info_mutex_;
 
     std::atomic<std::uint32_t> consecutive_errors_{0};
 
