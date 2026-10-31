@@ -27,6 +27,11 @@ namespace foray::platform::driver::hikvision::detail {
  * - 取流线程只由 `start()` 创建，只碰设备句柄与帧池，不持 `control_mutex_`；
  * - `read()` 由单个消费线程调用，只碰帧池；
  * - SDK 异常回调运行在 SDK 线程上，**只**置状态与计数。
+ *
+ * 帧池句柄规则（审计 H8）：`pool_` 由控制线程创建/释放，而 `read()` 在消费线程上
+ * 取值，两者**只能**通过 `frame_pool_snapshot()` / `set_frame_pool()` 访问，
+ * 由 `pool_mutex_` 串行化。取流线程在 start/stop 之间独占访问 `pool_`
+ * （`stop_locked()` 先 join 取流线程再释放池），因此不必加锁。
  */
 class CameraImpl final : public hal::Camera {
   public:
@@ -86,6 +91,12 @@ class CameraImpl final : public hal::Camera {
 
     void release_resources_locked();
 
+    /// @brief 锁定并拷出帧池句柄；`read()` 用它把池的生命周期延长到本次调用结束。
+    std::shared_ptr<hal::FramePool<hal::ImageFrame>> frame_pool_snapshot() const;
+
+    /// @brief 换出帧池句柄（创建或释放）；与 `frame_pool_snapshot()` 共用 `pool_mutex_`。
+    void set_frame_pool(std::shared_ptr<hal::FramePool<hal::ImageFrame>> pool);
+
     /// @brief 取流线程主体。
     void grab_loop();
 
@@ -98,6 +109,9 @@ class CameraImpl final : public hal::Camera {
     void* handle_ = nullptr;
 
     std::shared_ptr<hal::FramePool<hal::ImageFrame>> pool_;
+
+    /// @brief 保护 `pool_` 句柄本身；不保护帧池内部状态（那是无锁单写单读）。
+    mutable std::mutex pool_mutex_;
 
     std::thread grab_thread_;
 

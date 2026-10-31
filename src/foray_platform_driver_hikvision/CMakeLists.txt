@@ -180,10 +180,28 @@ if(FORAY_PLATFORM_BUILD_TESTS)
             GTest::gtest_main
             Threads::Threads)
 
+    # 生命周期压力测试：默认 10 万次 read() 与 close()/recover() 并发（审计 H8）。
+    # 始终参与编译（不会腐烂），但**不**注册进 ctest：跑一遍一分钟上下，
+    # 只作为回归回执手动执行，见文件头注释。
+    add_executable(foray_platform_driver_hikvision_stress
+        test/hikvision/camera_lifetime_stress.cpp
+    )
+    target_include_directories(foray_platform_driver_hikvision_stress
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(foray_platform_driver_hikvision_stress
+        PRIVATE
+            foray_hikvision_core_objects
+            foray_platform::hal
+            foray_platform::net
+            GTest::gtest_main
+            Threads::Threads)
+
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(foray_platform_driver_hikvision_tests
             PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(foray_platform_driver_hikvision_backend_tests
+            PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(foray_platform_driver_hikvision_stress
             PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 

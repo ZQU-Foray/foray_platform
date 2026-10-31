@@ -386,7 +386,7 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     }
 
     try {
-        pool_ = std::make_shared<hal::FramePool<hal::ImageFrame>>(slots, frame_bytes);
+        set_frame_pool(std::make_shared<hal::FramePool<hal::ImageFrame>>(slots, frame_bytes));
         // 先创建空池再填入像素格式等“每帧固定”字段，取流时只改序号与时间。
         pool_->payload_size();
     } catch (const std::bad_alloc&) {
@@ -484,7 +484,7 @@ void CameraImpl::release_resources_locked() {
         api_->destroy_handle(handle_);
         handle_ = nullptr;
     }
-    pool_.reset();
+    set_frame_pool(nullptr);
 }
 
 Result<void> CameraImpl::recover_locked() {
@@ -646,9 +646,22 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     last_device_frame_number_ = info.frame_number;
 }
 
+std::shared_ptr<hal::FramePool<hal::ImageFrame>> CameraImpl::frame_pool_snapshot() const {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    return pool_;
+}
+
+void CameraImpl::set_frame_pool(std::shared_ptr<hal::FramePool<hal::ImageFrame>> pool) {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    pool_ = std::move(pool);
+}
+
 Result<void> CameraImpl::read(hal::FrameLease<hal::ImageFrame>& out, time::Duration timeout) {
     const auto current = state_.load(std::memory_order_acquire);
-    if (current != hal::DeviceState::kStreaming || pool_ == nullptr) {
+    // 先把池句柄拷到本地（审计 H8）：`close()`/`recover()` 释放的是成员句柄，本次
+    // 调用与它已经取到的租约由本地 `shared_ptr` 保活，不再和释放动作竞争。
+    const auto pool = frame_pool_snapshot();
+    if (current != hal::DeviceState::kStreaming || pool == nullptr) {
         return Result<void>(make_error(
             ErrorCode::kNotOpen,
             "read() 需要相机处于 streaming 状态，当前: " + std::string(hal::to_string(current))));
@@ -659,7 +672,7 @@ Result<void> CameraImpl::read(hal::FrameLease<hal::ImageFrame>& out, time::Durat
     const std::int64_t deadline_ns = clock.now().nanoseconds_since_epoch() + budget_ns;
 
     for (;;) {
-        auto lease = pool_->try_acquire_latest();
+        auto lease = pool->try_acquire_latest();
         if (lease) {
             frames_delivered_.fetch_add(1, std::memory_order_relaxed);
             out = std::move(lease);
