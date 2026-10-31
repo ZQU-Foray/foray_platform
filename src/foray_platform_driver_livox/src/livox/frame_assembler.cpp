@@ -4,6 +4,20 @@
 
 namespace foray::platform::driver::livox::detail {
 
+namespace {
+
+/**
+ * @brief 设备时间整段回退的判定门限。
+ *
+ * 小于该值的回退是乱序/抖动（同帧内 10 ms 量级、跨帧不超过几百毫秒），必须丢掉，
+ * 否则更旧的时间戳会被当成新帧基准、把帧率打散；大于该值的回退只可能是 PTP 阶跃、
+ * GPS 重新授时或设备重启，属于"新纪元"，硬丢会让驱动永远等不到更大的时间戳。
+ * 取 1 s：远大于实际的乱序窗口，又小于阶跃量级（秒级及以上）。
+ */
+constexpr std::int64_t kBaseClockJumpNs = 1'000'000'000;
+
+} // namespace
+
 FrameAssembler::FrameAssembler(std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> pool,
                                std::uint32_t point_capacity, std::uint8_t line_num,
                                std::uint8_t dev_type, std::string_view frame_id,
@@ -23,6 +37,10 @@ bool FrameAssembler::on_packet(const PacketHeader& header, const std::uint8_t* p
     if (!writer_.has_value() || frame_boundary) {
         if (writer_.has_value()) {
             published = publish();
+        }
+        if (!accept_frame_base(header)) {
+            points_dropped_.fetch_add(header.dot_num, std::memory_order_relaxed);
+            return published;
         }
         if (!begin_frame(header, receive_steady_ns)) {
             return published;
@@ -93,6 +111,33 @@ bool FrameAssembler::is_frame_boundary(const PacketHeader& header,
            frame_expired(header, receive_steady_ns);
 }
 
+bool FrameAssembler::accept_frame_base(const PacketHeader& header) noexcept {
+    const auto candidate = static_cast<std::int64_t>(header.timestamp_ns);
+    if (candidate <= 0) {
+        // 没有设备时间戳：只有在还没有任何基准的流里才接受（整段无 PTP 的纯接收时钟流）；
+        // 已有基准时，时间戳为 0 只可能是损坏包或设备重启前的滞后包。
+        if (last_base_device_ns_ <= 0) {
+            return true;
+        }
+        stale_time_packets_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (last_base_device_ns_ <= 0) {
+        return true;
+    }
+    if (candidate > last_base_device_ns_) {
+        return true;
+    }
+    if (last_base_device_ns_ - candidate > kBaseClockJumpNs) {
+        // 整段回退：PTP 阶跃 / 重新授时 / 设备重启，按新纪元接受。
+        clock_jumps_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    // 乱序或小幅回退：不能让它成为新帧基准，否则 frame_expired() 会对后续每个包立即成立。
+    stale_time_packets_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
 bool FrameAssembler::frame_expired(const PacketHeader& header,
                                    std::uint64_t receive_steady_ns) const noexcept {
     if (!writer_.has_value() || count_ == 0 || frame_duration_ns_ <= 0) {
@@ -118,6 +163,10 @@ bool FrameAssembler::begin_frame(const PacketHeader& header, std::uint64_t recei
     writer_ = std::move(*writer);
     current_frame_cnt_ = header.frame_cnt;
     base_device_ns_ = static_cast<std::int64_t>(header.timestamp_ns);
+    if (base_device_ns_ > 0) {
+        // 单调水线：只接受比上一帧基准更晚的时间戳（整段回退已由 accept_frame_base 记数放行）。
+        last_base_device_ns_ = base_device_ns_;
+    }
     base_receive_steady_ns_ = receive_steady_ns;
     sync_ = sync_from_time_type(header.time_type);
     count_ = 0;

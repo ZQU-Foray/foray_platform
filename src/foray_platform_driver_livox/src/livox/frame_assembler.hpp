@@ -71,9 +71,20 @@ class FrameAssembler {
         return frame_cnt_discontinuities_.load(std::memory_order_relaxed);
     }
 
+    /// @brief 因设备时间戳回退（乱序/抖动）被丢弃的包数。
+    std::uint64_t stale_time_packets() const noexcept {
+        return stale_time_packets_.load(std::memory_order_relaxed);
+    }
+
+    /// @brief 设备时间整段回退（PTP 阶跃/重新授时）的次数，每次按新纪元接受。
+    std::uint64_t clock_jumps() const noexcept {
+        return clock_jumps_.load(std::memory_order_relaxed);
+    }
+
   private:
     bool begin_frame(const PacketHeader& header, std::uint64_t receive_steady_ns);
     bool is_frame_boundary(const PacketHeader& header, std::uint64_t receive_steady_ns);
+    bool accept_frame_base(const PacketHeader& header) noexcept;
     bool frame_expired(const PacketHeader& header, std::uint64_t receive_steady_ns) const noexcept;
     bool publish();
     void discard();
@@ -92,6 +103,8 @@ class FrameAssembler {
     std::optional<hal::FramePool<hal::PointCloudFrame>::Writer> writer_;
     std::uint8_t current_frame_cnt_ = 0;
     std::int64_t base_device_ns_ = 0;
+    /// @brief 已接受帧基准的单调水线，用于挡住乱序/回退包。
+    std::int64_t last_base_device_ns_ = 0;
     std::uint64_t base_receive_steady_ns_ = 0;
     hal::TimestampSync sync_ = hal::TimestampSync::kUnknown;
     std::size_t count_ = 0;
@@ -105,6 +118,8 @@ class FrameAssembler {
     std::atomic<std::uint64_t> dropped_frames_{0};
     std::atomic<std::uint64_t> points_dropped_{0};
     std::atomic<std::uint64_t> frame_cnt_discontinuities_{0};
+    std::atomic<std::uint64_t> stale_time_packets_{0};
+    std::atomic<std::uint64_t> clock_jumps_{0};
 };
 
 } // namespace foray::platform::driver::livox::detail

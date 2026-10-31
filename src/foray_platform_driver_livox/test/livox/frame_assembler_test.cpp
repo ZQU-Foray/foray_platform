@@ -17,6 +17,10 @@ constexpr std::uint8_t kMid360DeviceType = 9;
 constexpr std::uint8_t kMid360sDeviceType = 35;
 constexpr std::uint8_t kHapDeviceType = 15;
 
+// 设备时间单位（纳秒），用于 H18 的乱序/回退用例。
+constexpr std::uint64_t kMillisecond = 1'000'000ULL;
+constexpr std::uint64_t kSecond = 1'000'000'000ULL;
+
 std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> make_pool(std::size_t slots) {
     return std::make_shared<hal::FramePool<hal::PointCloudFrame>>(slots, kPayloadBytes);
 }
@@ -215,6 +219,79 @@ TEST(FrameAssemblerTest, Mid360sAlsoIgnoresFrameCountChanges) {
     ASSERT_TRUE(lease);
     EXPECT_EQ(lease->count, 4U);
     EXPECT_EQ(lease->sequence, 1U);
+}
+
+/**
+ * @brief 边界包时间戳回退时，不能把它当成新帧基准。
+ *
+ * 审计 H18：旧实现无条件把触发边界的那一包的时间戳当作 `base_device_ns_`。设备时间一旦
+ * 回退（乱序包、集线器重排、PTP 阶跃残留），新帧的基准就比真实时间更早，100 ms 时间窗
+ * 提前到期，帧被切成短帧、逐点 `time_offset_ns` 也被算歪。
+ */
+TEST(FrameAssemblerTest, OutOfOrderBoundaryPacketDoesNotResetFrameBase) {
+    auto pool = make_pool(4);
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar", 100);
+
+    constexpr std::uint64_t kStreamOrigin = 5 * kSecond; // 从整秒起，确保单调水线已建立。
+    std::size_t frames_in_loop = 0;
+    for (int index = 0; index <= 100; ++index) {
+        const auto stamp_ns =
+            kStreamOrigin + static_cast<std::uint64_t>(index) * 10ULL * kMillisecond;
+        const auto frame_cnt = static_cast<std::uint8_t>(index / 10);
+        const bool attack = index % 20 == 10;
+        // 每两帧制造一次边界包时间戳回退：比上一帧基准（stamp - 100 ms）还早 90 ms，
+        // 仍落在 1 s 抖动窗口内，属于必须丢掉的乱序包。
+        const std::uint64_t packet_stamp = attack ? stamp_ns - 190ULL * kMillisecond : stamp_ns;
+        const auto udp_cnt = attack ? std::uint16_t{0} : static_cast<std::uint16_t>(index % 10);
+        if (feed(assembler, frame_packet(frame_cnt, udp_cnt, packet_stamp, 2), stamp_ns + 1)) {
+            ++frames_in_loop;
+        }
+    }
+    EXPECT_GT(assembler.stale_time_packets(), 0U);
+    EXPECT_EQ(assembler.clock_jumps(), 0U);
+    EXPECT_TRUE(assembler.flush());
+
+    // 1010 ms 的设备时间、100 ms 时间窗 → 10 帧（≈10 Hz）；基准被回退包带歪时会多切出短帧。
+    EXPECT_NEAR(static_cast<double>(assembler.frames_published()), 10.0, 1.0);
+}
+
+/// @brief 设备时间整段回退（PTP 阶跃 /
+/// 重新授时）必须被当成新纪元接受，否则驱动永远等不到更大的时间戳。
+TEST(FrameAssemblerTest, LargeClockRollbackStartsNewEpoch) {
+    auto pool = make_pool(4);
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar", 100);
+
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 5 * kSecond, 2), 100));
+    EXPECT_TRUE(feed(assembler, frame_packet(1, 0, 5 * kSecond + 100 * kMillisecond, 2), 200));
+
+    // 回退 4 s：超过抖动窗口，按新纪元接受并计数。
+    EXPECT_TRUE(feed(assembler, frame_packet(2, 0, 1 * kSecond, 2), 300));
+    EXPECT_EQ(assembler.clock_jumps(), 1U);
+    EXPECT_EQ(assembler.stale_time_packets(), 0U);
+
+    // 新纪元下的后续包正常累积：再过 100 ms 才切帧。
+    EXPECT_FALSE(feed(assembler, frame_packet(2, 1, 1 * kSecond + 50 * kMillisecond, 2), 400));
+    EXPECT_TRUE(feed(assembler, frame_packet(3, 0, 1 * kSecond + 100 * kMillisecond, 2), 500));
+    EXPECT_EQ(assembler.frames_published(), 3U);
+}
+
+/// @brief 已有设备时间水线后，时间戳为 0 的滞后包不能被当成新帧基准。
+TEST(FrameAssemblerTest, ZeroTimestampAfterWaterlineIsDropped) {
+    auto pool = make_pool(4);
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar", 100);
+
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 5 * kSecond, 2), 100));
+    // 边界包时间戳为 0：先按 frame_cnt 发布，再拒绝它成为新基准。
+    EXPECT_TRUE(feed(assembler, frame_packet(1, 0, 0, 2), 200));
+    EXPECT_EQ(assembler.stale_time_packets(), 1U);
+    EXPECT_EQ(assembler.clock_jumps(), 0U);
+
+    // 该包被丢弃，帧里只剩它的点数没有进入任何帧；后续正常包把它补成新帧。
+    EXPECT_FALSE(feed(assembler, frame_packet(1, 1, 5 * kSecond + 50 * kMillisecond, 2), 300));
+    EXPECT_TRUE(feed(assembler, frame_packet(2, 0, 5 * kSecond + 100 * kMillisecond, 2), 400));
+    hal::FrameLease<hal::PointCloudFrame> lease = pool->try_acquire_latest();
+    ASSERT_TRUE(lease);
+    EXPECT_EQ(lease->device_base_time_ns, 5 * kSecond + 50 * kMillisecond);
 }
 
 } // namespace
