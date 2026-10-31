@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 namespace foray::platform::driver::livox::detail {
 namespace {
@@ -18,6 +19,11 @@ constexpr double kMillimetersToMeters = 0.001;
 constexpr double kCentimetersToMeters = 0.01;
 // `time_interval` 的单位是 0.1 µs。
 constexpr std::int64_t kTimeIntervalToNanoseconds = 100;
+
+// 逐点相对时间存进 `PointXYZITL::time_offset_ns`（std::int32_t），因此可表达的窗口上限
+// 约 2.147 s。组帧窗口必须先于这个上限被拒，否则靠后的包会在窄化时静默溢出。
+constexpr std::int64_t kMaxPointOffsetNs = std::numeric_limits<std::int32_t>::max();
+constexpr std::int64_t kMinPointOffsetNs = std::numeric_limits<std::int32_t>::min();
 
 // 协议固定偏移（字节）。
 constexpr std::size_t kOffsetVersion = 0;
@@ -44,6 +50,15 @@ constexpr std::uint8_t kDeviceHap = 15;
 constexpr std::uint8_t kDeviceMid360s = 35;
 
 // 各点类型的线上字节数（packed）。
+/**
+ * @brief 判断一段相对时间窗口是否超出 `PointXYZITL::time_offset_ns` 的表达能力。
+ *
+ * 逐点偏移 = 包时间 - 帧基准 + 包内偏移，可能为负（乱序包），因此两端都要检查。
+ */
+bool window_exceeds_point_offset(std::int64_t first_ns, std::int64_t last_ns) noexcept {
+    return first_ns < kMinPointOffsetNs || last_ns > kMaxPointOffsetNs;
+}
+
 constexpr std::size_t kHighPointBytes = 14;
 constexpr std::size_t kLowPointBytes = 8;
 constexpr std::size_t kSphericalPointBytes = 10;
@@ -196,6 +211,15 @@ Result<void> parse_points(const PacketHeader& header, const std::uint8_t* packet
     const std::uint8_t lines = line_num == 0 ? 1 : line_num;
     const std::int64_t packet_offset_ns =
         static_cast<std::int64_t>(header.timestamp_ns) - base_device_ns;
+
+    // 先算整包的时间范围，再决定是否写入：偏移一旦超出 int32 就不再是"精度问题"，
+    // 而是整包数据的时间域都错，必须响亮地拒收（由调用方计入 dropped_packets）。
+    const std::int64_t packet_span_ns =
+        static_cast<std::int64_t>(header.time_interval) * kTimeIntervalToNanoseconds;
+    if (window_exceeds_point_offset(packet_offset_ns, packet_offset_ns + packet_span_ns)) {
+        return make_error(ErrorCode::kInvalidArgument,
+                          "Livox 逐点相对时间超出 int32 纳秒可表达范围");
+    }
 
     for (std::size_t index = 0; index < header.dot_num; ++index) {
         // 先乘后除，避免逐点累计误差；time_interval 单位为 0.1 µs。

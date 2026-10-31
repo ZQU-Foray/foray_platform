@@ -38,6 +38,8 @@ constexpr std::uint8_t kScanPatternRepetitive = 0x01;
 
 // 恢复退避：100/200/400/800/1600 ms。
 constexpr std::int64_t kRecoverBackoffMs[] = {100, 200, 400, 800, 1600};
+// 组帧窗口上界：逐点相对时间存 int32 ns（约 ±2.147 s），窗口必须先于它被拒。
+constexpr std::uint32_t kMaxFrameDurationMs = 2000;
 
 void sleep_milliseconds(std::int64_t milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
@@ -219,8 +221,11 @@ Result<void> LidarImpl::open_locked() {
     if (config_.frame_buffer_count == 0) {
         return fail(make_error(ErrorCode::kInvalidArgument, "frame_buffer_count 必须大于 0"));
     }
-    if (config_.frame_duration_ms == 0) {
-        return fail(make_error(ErrorCode::kInvalidArgument, "frame_duration_ms 必须大于 0"));
+    if (config_.frame_duration_ms == 0 || config_.frame_duration_ms > kMaxFrameDurationMs) {
+        // 上界的依据：逐点相对时间存 int32 ns，可表达窗口约 2.147 s；
+        // 组帧窗口必须落在这个范围内，否则靠后的包只能溢出或整包被拒。
+        return fail(
+            make_error(ErrorCode::kInvalidArgument, "frame_duration_ms 超出 [1, 2000] 范围"));
     }
     if (config_.frame_timeout_ms == 0) {
         return fail(make_error(ErrorCode::kInvalidArgument, "frame_timeout_ms 必须大于 0"));

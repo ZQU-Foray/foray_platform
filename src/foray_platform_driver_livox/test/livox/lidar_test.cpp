@@ -227,6 +227,27 @@ TEST_F(LidarTest, RejectsConfigWithoutSelector) {
     EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
 }
 
+/// @brief H19：组帧窗口必须落在逐点相对时间（int32 纳秒）可表达的范围内。
+TEST_F(LidarTest, RejectsFrameDurationBeyondPointOffsetRange) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    hal::LidarConfig config = make_config("192.168.1.190", "livox_frame");
+    config.frame_duration_ms = 2001; // 超出 int32 纳秒可表达窗口（约 2147 ms）
+    auto lidar = make_device(config, api);
+    ASSERT_NE(lidar, nullptr);
+
+    const Result<void> opened = lidar->open();
+    EXPECT_FALSE(opened.ok());
+    EXPECT_EQ(opened.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
+
+    // 边界内的最大值仍然可以打开。
+    hal::LidarConfig accepted = make_config("192.168.1.191", "livox_frame");
+    accepted.frame_duration_ms = 2000;
+    auto second = make_device(accepted, api);
+    ASSERT_NE(second, nullptr);
+    EXPECT_TRUE(second->open().ok()) << "2000 ms 应当仍然可被接受";
+}
+
 TEST_F(LidarTest, RoutesMultipleHandles) {
     auto api = std::make_shared<test::MockLivoxApi>();
     const std::string ip_a = "192.168.1.110";

@@ -151,6 +151,48 @@ TEST(PacketParserTest, RejectsDualEcho) {
     EXPECT_EQ(parsed.error().code, ErrorCode::kUnsupportedFormat);
 }
 
+/**
+ * @brief H19：逐点相对时间存 int32 ns，越界必须拒包而不是静默溢出。
+ *
+ * 旧实现 `static_cast<std::int32_t>(packet_offset_ns + intra_ns)` 在组帧窗口被配得过大
+ * （> 2147 ms）时会把偏移截断成随机值甚至负数，时间域整体错乱且没有任何告警。
+ */
+TEST(PacketParserTest, RejectsPointOffsetOutsideInt32) {
+    std::vector<std::uint8_t> payload;
+    test::HighPointWire point{1000, 0, 0, 0, 0};
+    test::append(payload, &point, sizeof(point));
+
+    const auto parse_with = [&payload](std::uint64_t timestamp_ns, std::int64_t base_ns) {
+        const std::vector<std::uint8_t> packet =
+            make_packet(0x01, 1, 1, 0, 0, timestamp_ns, 0, payload);
+        const Result<PacketHeader> header = parse_header(packet.data(), packet.size());
+        hal::PointXYZITL out{};
+        std::size_t count = 0;
+        const Result<void> parsed =
+            parse_points(header.value(), packet.data(), packet.size(), 1, base_ns, &out, 1, count);
+        return std::pair<Result<void>, std::int32_t>(parsed, out.time_offset_ns);
+    };
+
+    constexpr std::int64_t kInt32Max = 2'147'483'647;
+    constexpr std::int64_t kInt32Min = -2'147'483'648;
+
+    // 边界值本身仍可表达（0 与 ±(2^31-1) / -2^31）。
+    EXPECT_TRUE(parse_with(0, 0).first.ok());
+    EXPECT_EQ(parse_with(0, 0).second, 0);
+    EXPECT_TRUE(parse_with(static_cast<std::uint64_t>(kInt32Max), 0).first.ok());
+    EXPECT_EQ(parse_with(static_cast<std::uint64_t>(kInt32Max), 0).second, kInt32Max);
+    EXPECT_TRUE(parse_with(std::uint64_t{0}, -kInt32Min).first.ok());
+    EXPECT_EQ(parse_with(std::uint64_t{0}, -kInt32Min).second, kInt32Min);
+
+    // 正/负各越界一格：整包拒收，错误码为参数非法。
+    const auto above = parse_with(static_cast<std::uint64_t>(kInt32Max + 1), 0);
+    EXPECT_FALSE(above.first.ok());
+    EXPECT_EQ(above.first.error().code, ErrorCode::kInvalidArgument);
+    const auto below = parse_with(std::uint64_t{0}, -kInt32Min + 1);
+    EXPECT_FALSE(below.first.ok());
+    EXPECT_EQ(below.first.error().code, ErrorCode::kInvalidArgument);
+}
+
 TEST(PacketParserTest, ParsesImu) {
     std::vector<std::uint8_t> payload(24, 0);
     test::put_f32(payload, 0, 0.1F);
