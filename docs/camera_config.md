@@ -135,7 +135,7 @@ hal::Camera（含 apply(CameraTuning)）  ← 运行期热改入口
 |---|---|---|---|---|
 | `camera.enable_ptp` | bool | `false` | static | `GevIEEE1588` |
 | `camera.timestamp_source` | enum `auto\|device\|host_receive` | `auto` | live | 时间戳来源策略 |
-| `camera.device_to_host_offset_ns` | int | 空 | live | 设备→主机标定偏移 |
+| `camera.device_to_host_offset_ns` | int | 空 | live | 设备→主机标定偏移（`设备时间 + 偏移 = 主机时间`） |
 | `camera.exposure_to_host_latency_ns` | double | 空 | live | 曝光→接收标定延迟 |
 | `camera.allow_unsynced_stamp` | bool | `true` | live | 无同步时是否允许主机时刻填充 |
 | `camera.frame_id` | string | `"camera"` | static | `ImageFrame::frame_id`（打开期固定：租约里的视图指向驱动内部存储，热改会悬垂） |
@@ -143,8 +143,12 @@ hal::Camera（含 apply(CameraTuning)）  ← 运行期热改入口
 `timestamp_source` 语义：
 - `auto`：PTP 从时钟在线 → 设备时间；否则按 `device_to_host_offset_ns` →
   再否则按 `allow_unsynced_stamp`。即 `docs/driver_hikvision.md` §7 的三条路径。
-- `device`：强制用设备计数换算，时钟不可用时 `sync = kNoSync`（**不**回退主机时刻）。
+- `device`：强制用设备计数换算（PTP 或标定偏移把设备时间换到墙钟），
+  两者都不成立时 `sync = kNoSync`、`stamp` 为零（**不**回退主机时刻）。
 - `host_receive`：强制主机接收时刻。
+
+`device_to_host_offset_ns` 的方向是「设备时间 + 偏移 = 主机时间」，只作用在设备时间上；
+设备时间换算不出来（tick 频率读不到）时该偏移无从施加，`auto` 会退回主机接收。
 
 ### 3.8 键总览
 

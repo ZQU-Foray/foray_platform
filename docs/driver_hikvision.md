@@ -384,26 +384,34 @@ MVS 侧可用信息：
 | `nSecondCount` / `nCycleCount` / `nCycleOffset` | GVSP 水印时标（GigE） | 首期只记录，不参与换算 |
 | `GevIEEE1588Status` | PTP 状态（Master/Slave） | 判定 `kPtp` |
 
-三条路径，按优先级：
+三条路径，按优先级（`stamp` 恒为绝对墙钟，`device_time_ns` 恒为设备计数换算值，
+**两个时间域的值永不互相顶替**）：
 
 1. **设备时间已校准**（`enable_ptp` 且 `GevIEEE1588Status == Slave`）：
    `device_time_ns = device_ticks * 1e9 / tick_freq`，
    `stamp = Timestamp::from_nanoseconds(device_time_ns)`，`sync = kPtp`。
-2. **主机接收 + 标定偏移**（`device_to_host_offset_ns` 已配置）：
-   `stamp = Timestamp::from_nanoseconds(receive_wall_ns + offset_ns)`、
-   `sync = kDeviceCalibrated`；同时仍填 `device_time_ns = ticks → ns`（若 tick 频率可读）
-   与 `device_tick_frequency_hz`，供离线重算。
+   PTP 从时钟在线时设备计数本身就在墙钟时基上，这个等式才成立。
+2. **设备时间 + 标定偏移**（`device_to_host_offset_ns` 非 0）：
+   `stamp = Timestamp::from_nanoseconds(device_time_ns + offset_ns)`、
+   `sync = kDeviceCalibrated`。偏移的方向是「设备 → 主机」的**加性**修正，
+   不是拿 `receive_wall_ns` 去加——那样既用错了被加数，又凭空多出一倍偏差。
+   偏移把时间推出 `int64` 时按「标定不可信」处理，退到路径 3 / 无同步。
 3. **无同步**：`allow_unsynced_stamp == true` 时
    `stamp = Timestamp::from_nanoseconds(receive_wall_ns - exposure_to_host_latency_ns)`、
    `sync = kHostReceive`（**不是曝光时刻**，命名即警告）；
    `allow_unsynced_stamp == false` 时 `stamp` 置零、`sync = kNoSync`。
    `exposure_to_host_latency_ns` 缺省按 0 处理。
 
+`camera.timestamp_source` 决定能用哪几条：`auto` 按 1 → 2 → 3 顺序取；
+`device` 只允许 1、2，两者都不成立时 `stamp` 置零、`sync = kNoSync`（**不**回退
+主机时刻）；`host_receive` 直接取 3。
+
 `receive_stamp` 一律在 `get_frame` 返回后立刻取 `SteadyClock`，**不是**取帧后的
 `steady_clock::now()` 补写（`sp_vision_25` 的问题），因为拷贝前取点更接近 SDK 交付时刻。
 
 `tick_freq` 读不到时：`device_tick_frequency_hz = 0`、`device_time_ns = 0`，
-`sync` 至少降为 `kHostReceive`，绝不假装「设备时间可用」。
+此时路径 1、2 都无从计算（偏移没有设备时间可加），`auto` 降为 `kHostReceive`、
+`device` 降为 `kNoSync`，绝不假装「设备时间可用」。
 
 ## 8. 错误映射
 

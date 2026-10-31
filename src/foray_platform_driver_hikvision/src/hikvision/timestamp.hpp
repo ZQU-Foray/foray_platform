@@ -51,10 +51,15 @@ struct TimingResult {
 /**
  * @brief 按 `docs/driver_hikvision.md` §7 的三条路径换算一帧时间。
  *
- * - `kAuto`：PTP slave → 标定偏移 → 主机接收 的优先级；
- * - `kDevice`：强制设备计数换算，tick 读不到时 `sync = kNoSync` 且 `stamp` 为零，
- *   **不回退主机时刻**（避免把未同步的时间伪装成同步）；
- * - `kHostReceive`：强制主机接收时刻倒推曝光时刻。
+ * `stamp` 恒为绝对墙钟，`device_time_ns` 恒为设备计数换算值，两者不互相顶替：
+ * - PTP 从时钟在线：`stamp = device_time_ns`（设备时钟即墙钟）、`sync = kPtp`；
+ * - 有标定偏移：`stamp = device_time_ns + device_to_host_offset_ns`、
+ *   `sync = kDeviceCalibrated`（偏移方向是「设备 → 主机」的加性修正）；
+ * - `kHostReceive`：强制主机接收时刻倒推曝光时刻；
+ * - `kAuto`：PTP → 标定偏移 → 主机接收 的优先级；设备时间换算不出来时无从施加
+ *   偏移，直接由主机接收兜底；
+ * - `kDevice`：只用设备时间，既无 PTP 也无偏移时 `sync = kNoSync` 且 `stamp` 为零，
+ *   **不回退主机时刻**（避免把未同步的时间伪装成同步）。
  *
  * 纯函数，不读时钟、不碰设备，可独立单测。
  */
