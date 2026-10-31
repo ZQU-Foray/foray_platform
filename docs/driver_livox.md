@@ -95,14 +95,16 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 
 ## 5. 组帧
 
-帧边界（任一条件）：
+帧边界（按机型分派，见 `frame_cnt_represents_frame()`）：
 
-- `frame_cnt` 变化（重复扫描的有效帧号）；
-- `udp_cnt == 0` 且当前帧非空（有意义的帧起始）；
-- 距当前帧首包达到 `frame_duration_ms`（默认 100 ms）。
+- 重复扫描机型（HAP / Mid-40 / Tele-15 等）：
+  `frame_cnt` 变化、`udp_cnt == 0` 且当前帧非空、距当前帧首包达到 `frame_duration_ms`，
+  任一条件成立即切帧；
+- Mid-360 / Mid-360s（非重复扫描）：**只**按 `frame_duration_ms` 切帧；`frame_cnt` 变化只计入
+  `frame_cnt_discontinuities()` 作一致性观测，不切帧。
 
 > **Mid-360 非重复扫描下 `frame_cnt` 无效**，`udp_cnt` 也可能不回零；
-> 必须依赖时间窗口切帧，否则会一直累积、永远不发布。
+> 必须依赖时间窗口切帧，否则一帧会被切成几十个碎帧，下游帧率与点数全错。
 
 其他约定：
 

@@ -12,6 +12,11 @@ namespace {
 
 constexpr std::size_t kPayloadBytes = 256 * sizeof(hal::PointXYZITL);
 
+// 机型 ID 取自 LivoxLidarDeviceType；见 packet_parser.cpp 的 kDevice* 常量。
+constexpr std::uint8_t kMid360DeviceType = 9;
+constexpr std::uint8_t kMid360sDeviceType = 35;
+constexpr std::uint8_t kHapDeviceType = 15;
+
 std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> make_pool(std::size_t slots) {
     return std::make_shared<hal::FramePool<hal::PointCloudFrame>>(slots, kPayloadBytes);
 }
@@ -39,7 +44,7 @@ bool feed(FrameAssembler& assembler, const std::vector<std::uint8_t>& packet,
 
 TEST(FrameAssemblerTest, PublishesOnFrameChange) {
     auto pool = make_pool(3);
-    FrameAssembler assembler(pool, 256, 4, "lidar");
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
 
     EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 1'000'000, 2), 100));
     EXPECT_FALSE(feed(assembler, frame_packet(0, 1, 1'000'500, 2), 200));
@@ -69,7 +74,7 @@ TEST(FrameAssemblerTest, PublishesOnFrameChange) {
 TEST(FrameAssemblerTest, PublishesWhenFrameDurationExpires) {
     auto pool = make_pool(3);
     // 非重复扫描 frame_cnt 无效：用 10 ms 时间窗口切帧。
-    FrameAssembler assembler(pool, 256, 4, "lidar", 10);
+    FrameAssembler assembler(pool, 256, 4, kMid360DeviceType, "lidar", 10);
 
     EXPECT_FALSE(feed(assembler, frame_packet(0, 100, 1'000'000, 2), 100));
     EXPECT_FALSE(feed(assembler, frame_packet(0, 101, 5'000'000, 2), 200));
@@ -90,7 +95,7 @@ TEST(FrameAssemblerTest, PublishesWhenFrameDurationExpires) {
 
 TEST(FrameAssemblerTest, PublishesAfterIdleTimeout) {
     auto pool = make_pool(2);
-    FrameAssembler assembler(pool, 256, 4, "lidar");
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
 
     EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 0, 2), 1000));
     EXPECT_FALSE(assembler.publish_if_idle(1000, 1000));
@@ -100,7 +105,7 @@ TEST(FrameAssemblerTest, PublishesAfterIdleTimeout) {
 
 TEST(FrameAssemblerTest, NoSyncKeepsBaseTimeZero) {
     auto pool = make_pool(2);
-    FrameAssembler assembler(pool, 256, 4, "lidar");
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
 
     std::vector<std::uint8_t> payload;
     test::HighPointWire point{1000, 0, 0, 1, 0};
@@ -120,7 +125,7 @@ TEST(FrameAssemblerTest, NoSyncKeepsBaseTimeZero) {
 
 TEST(FrameAssemblerTest, OverflowDropsRemainingFrame) {
     auto pool = make_pool(2);
-    FrameAssembler assembler(pool, 2, 4, "lidar");
+    FrameAssembler assembler(pool, 2, 4, kHapDeviceType, "lidar");
 
     EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 0, 4), 100));
     EXPECT_EQ(assembler.point_count(), 0U);
@@ -140,7 +145,7 @@ TEST(FrameAssemblerTest, OverflowDropsRemainingFrame) {
 
 TEST(FrameAssemblerTest, NoFreeSlotDropsFrame) {
     auto pool = make_pool(1);
-    FrameAssembler assembler(pool, 256, 4, "lidar");
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
 
     EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 0, 2), 100));
     EXPECT_TRUE(feed(assembler, frame_packet(1, 0, 0, 2), 200));
@@ -150,6 +155,66 @@ TEST(FrameAssemblerTest, NoFreeSlotDropsFrame) {
     hal::FrameLease<hal::PointCloudFrame> lease = pool->try_acquire_latest();
     ASSERT_TRUE(lease);
     EXPECT_EQ(lease->count, 2U);
+}
+
+TEST(FrameAssemblerTest, FrameCountUsabilityFollowsDeviceType) {
+    // 非重复扫描机型只认时间窗；其余机型（含未知机型）沿用 frame_cnt 语义。
+    EXPECT_FALSE(frame_cnt_represents_frame(kMid360DeviceType));
+    EXPECT_FALSE(frame_cnt_represents_frame(kMid360sDeviceType));
+    EXPECT_TRUE(frame_cnt_represents_frame(kHapDeviceType));
+    EXPECT_TRUE(frame_cnt_represents_frame(10));
+    EXPECT_TRUE(frame_cnt_represents_frame(0));
+}
+
+/**
+ * @brief Mid-360 的 frame_cnt 每包都变时，不能按它切帧。
+ *
+ * 审计 H17：旧实现无条件用 `frame_cnt` / `udp_cnt == 0` 定帧边界，而 Mid-360 是非重复
+ * 扫描，固件不保证这两个字段按帧回零，结果一帧被切成几十个两点的碎帧，下游看到的帧率
+ * 远高于 10 Hz、每帧点数远低于预期。
+ */
+TEST(FrameAssemblerTest, Mid360SplitsByTimeWindowNotFrameCount) {
+    auto pool = make_pool(3);
+    FrameAssembler assembler(pool, 256, 4, kMid360DeviceType, "lidar", 100);
+
+    // 991 ms 的流量，每包 2 点、每 10 ms 一包，frame_cnt 与 udp_cnt 每包都变。
+    std::size_t published_in_loop = 0;
+    for (int index = 0; index < 100; ++index) {
+        const auto stamp_ns = static_cast<std::uint64_t>(index) * 10'000'000ULL;
+        if (feed(assembler,
+                 frame_packet(static_cast<std::uint8_t>(index), static_cast<std::uint16_t>(index),
+                              stamp_ns, 2),
+                 stamp_ns + 1)) {
+            ++published_in_loop;
+        }
+    }
+    // 只有时间窗到期才切帧：100/200/.../900 ms 共 9 次，末尾残留由 flush 补 1 帧。
+    EXPECT_EQ(published_in_loop, 9U);
+    EXPECT_TRUE(assembler.flush());
+
+    // 时间窗 100 ms + 每帧 10 包 → 10 帧（≈10.1 Hz）；按 frame_cnt 切会切出约 100 个碎帧。
+    EXPECT_EQ(assembler.frames_published(), 10U);
+    EXPECT_GT(assembler.frame_cnt_discontinuities(), 90U);
+}
+
+/// @brief Mid-360s（dev_type 35）同属非重复扫描，行为必须与 Mid-360 一致。
+TEST(FrameAssemblerTest, Mid360sAlsoIgnoresFrameCountChanges) {
+    auto pool = make_pool(3);
+    FrameAssembler assembler(pool, 256, 4, kMid360sDeviceType, "lidar", 100);
+
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 1'000'000, 2), 100));
+    // frame_cnt 变了，但还在同一个 100 ms 时间窗内：不许切帧。
+    EXPECT_FALSE(feed(assembler, frame_packet(7, 3, 50'000'000, 2), 200));
+    EXPECT_EQ(assembler.frames_published(), 0U);
+    EXPECT_EQ(assembler.point_count(), 4U);
+    EXPECT_EQ(assembler.frame_cnt_discontinuities(), 1U);
+
+    // 越过时间窗才发布，且一帧包含两包共 4 点。
+    EXPECT_TRUE(feed(assembler, frame_packet(9, 4, 150'000'000, 2), 300));
+    hal::FrameLease<hal::PointCloudFrame> lease = pool->try_acquire_latest();
+    ASSERT_TRUE(lease);
+    EXPECT_EQ(lease->count, 4U);
+    EXPECT_EQ(lease->sequence, 1U);
 }
 
 } // namespace

@@ -71,6 +71,16 @@ std::uint8_t default_line_num(std::uint8_t dev_type) noexcept;
 const char* model_name(std::uint8_t dev_type) noexcept;
 
 /**
+ * @brief 该机型能否用 `frame_cnt` 切帧。
+ *
+ * Mid-360 / Mid-360s 是非重复扫描，`frame_cnt` 在固件里不承担帧边界语义（既不单调
+ * 递增也不保证回零，`udp_cnt` 同样可能不回零），只能用时间窗切帧；其余机型是重复
+ * 扫描，`frame_cnt` 变化与 `udp_cnt` 回零都是可靠的帧边界。见 `docs/driver_livox.md`
+ * §5「组帧」。
+ */
+bool frame_cnt_represents_frame(std::uint8_t dev_type) noexcept;
+
+/**
  * @brief IPv4 点分字符串 → Livox handle。
  *
  * Livox 的 handle 是 `sockaddr_in::sin_addr.s_addr` 的原始数值，

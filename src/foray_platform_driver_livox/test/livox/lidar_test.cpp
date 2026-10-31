@@ -120,7 +120,10 @@ TEST_F(LidarTest, LifecycleCloudImuAndStats) {
     const Result<void> read = lidar->read(lease, kReadTimeout);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_TRUE(lease);
-    EXPECT_EQ(lease->count, 4U);
+    // Mid-360 是非重复扫描：第三包虽然把 frame_cnt 从 0 改成 1，也不构成帧边界
+    // （审计 H17）。这一帧由 frame_timeout_ms 超时发布，因此包含三包共 6 点。
+    // 旧实现按 frame_cnt 切帧，这里只拿到 4 点——那正是被审计点名的错误行为。
+    EXPECT_EQ(lease->count, 6U);
     EXPECT_EQ(lease->frame_id, "lidar_front");
     EXPECT_EQ(lease->base_time.nanoseconds_since_epoch(), 1'000'000);
     EXPECT_EQ(lease->points[3].time_offset_ns, 1000);

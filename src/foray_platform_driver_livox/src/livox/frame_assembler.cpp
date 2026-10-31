@@ -6,8 +6,10 @@ namespace foray::platform::driver::livox::detail {
 
 FrameAssembler::FrameAssembler(std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> pool,
                                std::uint32_t point_capacity, std::uint8_t line_num,
-                               std::string_view frame_id, std::uint32_t frame_duration_ms)
-    : pool_(std::move(pool)), capacity_(point_capacity), line_num_(line_num), frame_id_(frame_id),
+                               std::uint8_t dev_type, std::string_view frame_id,
+                               std::uint32_t frame_duration_ms)
+    : pool_(std::move(pool)), capacity_(point_capacity), line_num_(line_num),
+      frame_cnt_represents_frame_(frame_cnt_represents_frame(dev_type)), frame_id_(frame_id),
       frame_duration_ns_(static_cast<std::int64_t>(frame_duration_ms) * 1'000'000) {
 }
 
@@ -16,9 +18,7 @@ bool FrameAssembler::on_packet(const PacketHeader& header, const std::uint8_t* p
     last_packet_steady_ns_ = receive_steady_ns;
 
     bool published = false;
-    const bool frame_boundary = writer_.has_value() && (header.frame_cnt != current_frame_cnt_ ||
-                                                        (header.udp_cnt == 0 && count_ > 0) ||
-                                                        frame_expired(header, receive_steady_ns));
+    const bool frame_boundary = writer_.has_value() && is_frame_boundary(header, receive_steady_ns);
 
     if (!writer_.has_value() || frame_boundary) {
         if (writer_.has_value()) {
@@ -77,6 +77,20 @@ bool FrameAssembler::flush() {
         return false;
     }
     return publish();
+}
+
+bool FrameAssembler::is_frame_boundary(const PacketHeader& header,
+                                       std::uint64_t receive_steady_ns) {
+    if (!frame_cnt_represents_frame_) {
+        // 非重复扫描机型（Mid-360/360s）：frame_cnt 与 udp_cnt 都不承担帧边界语义，
+        // 按它们切帧会把一帧切成几十段。变化只计入观测计数，切帧只认时间窗。
+        if (header.frame_cnt != current_frame_cnt_) {
+            frame_cnt_discontinuities_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return frame_expired(header, receive_steady_ns);
+    }
+    return header.frame_cnt != current_frame_cnt_ || (header.udp_cnt == 0 && count_ > 0) ||
+           frame_expired(header, receive_steady_ns);
 }
 
 bool FrameAssembler::frame_expired(const PacketHeader& header,

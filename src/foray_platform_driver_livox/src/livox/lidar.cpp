@@ -456,8 +456,11 @@ void LidarImpl::update_sensor_info_locked() {
 }
 
 void LidarImpl::parse_loop() {
-    FrameAssembler assembler(pool_, config_.point_buffer_capacity, line_num_, config_.frame_id,
-                             config_.frame_duration_ms);
+    // `start_locked()` 在拉起解析线程前已经解引用过 `sink_`，这里不可能为空；
+    // 机型决定帧边界语义，不允许用「默认机型」兜底。
+    const std::uint8_t dev_type = sink_->dev_type.load(std::memory_order_relaxed);
+    FrameAssembler assembler(pool_, config_.point_buffer_capacity, line_num_, dev_type,
+                             config_.frame_id, config_.frame_duration_ms);
     const std::int64_t timeout_ns = static_cast<std::int64_t>(config_.frame_timeout_ms) * 1'000'000;
 
     PacketSlot slot;

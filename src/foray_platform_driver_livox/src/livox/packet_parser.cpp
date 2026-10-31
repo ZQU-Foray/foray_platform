@@ -318,6 +318,12 @@ const char* model_name(std::uint8_t dev_type) noexcept {
     }
 }
 
+bool frame_cnt_represents_frame(std::uint8_t dev_type) noexcept {
+    // Mid-360 系列是非重复扫描：固件不保证 frame_cnt 单调递增或按帧回零，udp_cnt 也可能
+    // 不回零，只有时间窗能稳定切出 10 Hz 的帧（docs/driver_livox.md §5）。
+    return dev_type != kDeviceMid360 && dev_type != kDeviceMid360s;
+}
+
 std::uint32_t ipv4_to_handle(const std::string& ip) noexcept {
     // SDK 的 handle 就是 sockaddr_in::sin_addr.s_addr 的原始数值；
     // 在小端机上它看起来是字节反序的，不能用 (a<<24)|... 手工拼接。
