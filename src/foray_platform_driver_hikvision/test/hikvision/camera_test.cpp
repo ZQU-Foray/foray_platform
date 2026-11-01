@@ -716,6 +716,61 @@ TEST(HikvisionCamera, ConsecutiveGrabErrorsMarkError) {
     EXPECT_GE(harness.camera->stats().sdk_errors, 5U);
 }
 
+/**
+ * @brief 审计 H13：自由运行时「一直没数据」必须判成停摆，而不是永远静默等待。
+ *
+ * 改前的实现把 `MV_E_NODATA` 与超时一起当正常控制流 `continue`，相机会一直停在
+ * `kStreaming`、`read()` 永远返回 `kTimeout`，上层没有任何线索去调 `recover()`。
+ * 现在连续 `kMaxConsecutiveStarvations`（25 次，对应真实设备约 2.5 s）没数据即置
+ * `kError`，`read()` 随之返回 `kNotOpen` 并把当前状态带出来。
+ */
+TEST(HikvisionCamera, FreeRunStarvationMarksError) {
+    Harness harness;
+    harness.stream_ok();
+
+    EXPECT_TRUE(
+        wait_for_state(*harness.camera, hal::DeviceState::kError, std::chrono::milliseconds(3000)));
+    EXPECT_GE(harness.camera->stats().timeouts, 1U);
+    EXPECT_GE(harness.camera->stats().sdk_errors, 1U);
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    const auto status = harness.camera->read(lease, time::Duration::from_milliseconds(10));
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kNotOpen);
+}
+
+/// @brief 触发模式下等触发是正常状态：同样没数据，但不能判成停摆。
+TEST(HikvisionCamera, TriggerModeDoesNotTreatSilenceAsStall) {
+    Harness harness;
+    harness.config.trigger.mode = hal::TriggerMode::kSoftware;
+    harness.stream_ok();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kStreaming);
+    EXPECT_GE(harness.camera->stats().timeouts, 1U);
+    EXPECT_EQ(harness.camera->stats().sdk_errors, 0U);
+}
+
+/**
+ * @brief `MV_E_GC_TIMEOUT` 是真实故障，即使处在等触发的模式也必须计入失败。
+ *
+ * 改前它与 `MV_E_NODATA` 混在同一个 `continue` 分支里，GenICam 控制通道超时被当成
+ * 「这次没数据」，链路坏掉也不会进 `kError`（审计 H13）。
+ */
+TEST(HikvisionCamera, GenicamTimeoutIsAnSdkErrorOnEveryPath) {
+    Harness harness;
+    harness.config.trigger.mode = hal::TriggerMode::kSoftware;
+    harness.api->frame_error = detail::mvs_error::kGcTimeout;
+    harness.stream_ok();
+
+    EXPECT_TRUE(wait_for_state(*harness.camera, hal::DeviceState::kError));
+    EXPECT_GE(harness.camera->stats().sdk_errors, 5U);
+    EXPECT_EQ(static_cast<std::uint32_t>(harness.camera->stats().last_error_vendor_code),
+              detail::mvs_error::kGcTimeout);
+}
+
 /// @brief `supported_keys()` 必须声明驱动认识的键，供配置期自检。
 TEST(HikvisionCamera, SupportedKeysCoverTuningSurface) {
     Harness harness;

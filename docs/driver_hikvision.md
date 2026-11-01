@@ -253,22 +253,42 @@ state = kOpen
 
 ```cpp
 void CameraImpl::grab_loop() {
-    std::uint32_t consecutive_errors = 0;
-    while (!stop_.load(std::memory_order_acquire)) {
+    while (!stop_requested_.load(std::memory_order_acquire)) {
         auto frame = api_->get_frame(handle_, kGrabTimeoutMs);
         if (!frame.ok()) {
-            if (frame.error().code == ErrorCode::kTimeout || frame.error().code == ErrorCode::kNoData) {
+            const Error& error = frame.error();
+            last_vendor_code_.store(error.vendor_code, std::memory_order_relaxed);
+            // MV_E_NODATA 与不带厂商码的 kTimeout 都是「这次没数据」；
+            // 带厂商码的 kTimeout 是 MV_E_GC_TIMEOUT 之类的真实故障。
+            const bool silent = error.code == ErrorCode::kNoData ||
+                                (error.code == ErrorCode::kTimeout && error.vendor_code == 0);
+            if (silent) {
                 timeouts_.fetch_add(1, std::memory_order_relaxed);
-                continue;  // 正常控制流，不 sleep 轮询
+                if (wait_for_trigger_.load(std::memory_order_relaxed)) {
+                    starve_since_ns_ = 0;
+                    continue;  // 触发模式下等触发可以无限长
+                }
+                const std::int64_t now_ns = time::SteadyClock().now().nanoseconds_since_epoch();
+                if (starve_since_ns_ == 0) {
+                    starve_since_ns_ = now_ns;
+                    continue;
+                }
+                if (now_ns - starve_since_ns_ >= kStarvationWindowNs) {
+                    sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+                    state_.store(hal::DeviceState::kError, std::memory_order_release);
+                    return;
+                }
+                continue;
             }
             sdk_errors_.fetch_add(1, std::memory_order_relaxed);
             if (++consecutive_errors >= kMaxConsecutiveErrors) {
-                state_.store(DeviceState::kError, std::memory_order_release);
-                break;
+                state_.store(hal::DeviceState::kError, std::memory_order_release);
+                return;
             }
             continue;
         }
-        consecutive_errors = 0;
+        consecutive_errors_.store(0, std::memory_order_relaxed);
+        starve_since_ns_ = 0;
         publish_frame(*frame);
         api_->free_frame(handle_, std::move(frame));  // 同线程归还，绝不跨线程
     }
@@ -277,6 +297,17 @@ void CameraImpl::grab_loop() {
 
 - `kGrabTimeoutMs = 100`：`hal_sensor_driver_research.md` §4.3 给出的区间 50–100 ms
   上界；超时是正常控制流，靠 SDK 阻塞等待而不是 `sleep(1ms)` 轮询（`sp_vision_25` 的做法）。
+- **「没数据」与「链路失败」分家**（审计 H13）：
+  - `MV_E_NODATA`（0x80000007，SDK 原文是「超时，未收到数据」）与不带厂商码的
+    `ErrorCode::kTimeout` 属于正常等待，只累加 `timeouts`；
+  - 带厂商码的 `kTimeout`（即 `MV_E_GC_TIMEOUT` 0x80000107）在抓流里出现说明控制通道
+    或链路已经不对，计入 `sdk_errors` 与连续失败计数；
+  - 自由运行时沉默超过 `kStarvationWindowNs`（2 s）判定流已停摆，置 `kError` 交给上层
+    `recover()`。用时间而非迭代次数：真实 SDK 每次等待 100 ms，测试 mock 只 sleep 1 ms，
+    按次数判会让同一份代码在两种环境下阈值差 100 倍。2 s 比本文档声明的最低帧率 1 Hz
+    留了一倍余量；
+  - 触发模式下「没数据」是正常状态，不判停摆（`wait_for_trigger_` 在 `start_locked()`
+    按 `config_.trigger.mode` 一次性写入——触发方式是 static 级配置）。
 - `kMaxConsecutiveErrors = 5`：连续 5 次非超时错误即判 `kError`；不自动重连（HAL 约定），
   由上层决定是否 `recover()`。
 - `publish_frame()`：

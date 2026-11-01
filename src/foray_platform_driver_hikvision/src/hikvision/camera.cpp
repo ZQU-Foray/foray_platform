@@ -29,6 +29,14 @@ constexpr std::uint32_t kGrabTimeoutMs = 100;
 /// 才认为需要 `recover()`。
 constexpr std::uint32_t kMaxConsecutiveErrors = 5;
 
+/// @brief 自由运行时「一直没数据」持续多久判定取流停摆（审计 H13）。
+///
+/// 用时间而不是迭代次数：真实 SDK 的等待窗口是 `kGrabTimeoutMs`，但测试里的
+/// mock 只 sleep 1 ms，按次数判会让同一份代码在两种环境下阈值相差 100 倍。
+/// 2 s 比文档 §5 声明支持的最低帧率（1 Hz，周期 1 s）留了一倍余量：慢速相机不会被
+/// 误判，真正停掉的流也能在上层超时抱怨之前进入 `kError` 交给 `recover()`。
+constexpr std::int64_t kStarvationWindowNs = 2'000'000'000;
+
 /// @brief `read()` 的轮询间隔，与 Livox 驱动保持一致。
 constexpr std::uint32_t kPollMicroseconds = 200;
 
@@ -438,6 +446,11 @@ Result<void> CameraImpl::start_locked() {
 
     stop_requested_.store(false, std::memory_order_release);
     consecutive_errors_.store(0, std::memory_order_relaxed);
+    starve_since_ns_ = 0;
+    // 触发方式属于 static 级配置（运行期不热改），在这里一次性告诉取流线程：
+    // 触发模式下的「没数据」是正常状态，不能判成停摆（审计 H13）。
+    wait_for_trigger_.store(config_.trigger.mode != hal::TriggerMode::kOff,
+                            std::memory_order_release);
     try {
         grab_thread_ = std::thread([this] { grab_loop(); });
     } catch (const std::system_error& error) {
@@ -552,14 +565,35 @@ void CameraImpl::grab_loop() {
         if (!frame.ok()) {
             const Error& error = frame.error();
             last_vendor_code_.store(error.vendor_code, std::memory_order_relaxed);
-            if (error.code == ErrorCode::kTimeout || error.code == ErrorCode::kNoData) {
-                // 超时是正常控制流：继续等下一帧，不 sleep（SDK 内部已经阻塞过）。
+            // 「没数据」有两个来源：MV_E_NODATA（SDK 明说这次等待里没收到数据）与
+            // 不带厂商码的 kTimeout（抽象层自己的超时）。两者都属于正常等待，不能
+            // 算失败；带厂商码的 kTimeout 是 MV_E_GC_TIMEOUT 之类的真实故障——抓流
+            // 时出现说明控制通道或链路已经不对，必须计入失败（审计 H13）。
+            const bool silent = error.code == ErrorCode::kNoData ||
+                                (error.code == ErrorCode::kTimeout && error.vendor_code == 0);
+            if (silent) {
                 timeouts_.fetch_add(1, std::memory_order_relaxed);
+                if (wait_for_trigger_.load(std::memory_order_relaxed)) {
+                    // 触发模式下等触发可以无限长，不判停摆。
+                    starve_since_ns_ = 0;
+                    continue;
+                }
+                // 自由运行时相机应当持续出图：沉默超过 `kStarvationWindowNs` 说明流
+                // 已经停了（掉线、相机被关、网线松），置 kError 交给上层 recover()。
+                const std::int64_t now_ns = time::SteadyClock().now().nanoseconds_since_epoch();
+                if (starve_since_ns_ == 0) {
+                    starve_since_ns_ = now_ns;
+                    continue;
+                }
+                if (now_ns - starve_since_ns_ >= kStarvationWindowNs) {
+                    sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+                    state_.store(hal::DeviceState::kError, std::memory_order_release);
+                    return;
+                }
                 continue;
             }
             sdk_errors_.fetch_add(1, std::memory_order_relaxed);
-            const auto streak =
-                consecutive_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
+            const auto streak = consecutive_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
             if (streak >= kMaxConsecutiveErrors) {
                 // 连续失败意味着链路已坏；交给上层 recover()，线程自行退出。
                 state_.store(hal::DeviceState::kError, std::memory_order_release);
@@ -568,6 +602,7 @@ void CameraImpl::grab_loop() {
             continue;
         }
         consecutive_errors_.store(0, std::memory_order_relaxed);
+        starve_since_ns_ = 0;
 
         publish_frame(*frame.value());
 

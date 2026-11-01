@@ -154,6 +154,17 @@ class CameraImpl final : public hal::Camera {
 
     std::atomic<std::uint32_t> consecutive_errors_{0};
 
+    /// @brief 「没数据」开始的时刻（steady ns）；0 表示当前有数据在流。
+    ///
+    /// 只由取流线程读写，不需要原子；用于判定自由运行下的取流停摆（审计 H13）。
+    std::int64_t starve_since_ns_ = 0;
+
+    /// @brief 当前配置是否在等外部触发；触发模式下「没数据」是正常状态。
+    ///
+    /// 由控制线程在 `start_locked()` 里按 `config_.trigger.mode` 写入，
+    /// 取流线程只读——触发方式是 static 级配置，运行期不会热改。
+    std::atomic<bool> wait_for_trigger_{false};
+
     std::atomic<std::uint64_t> frames_received_{0};
 
     std::atomic<std::uint64_t> frames_delivered_{0};
