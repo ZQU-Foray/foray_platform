@@ -246,6 +246,10 @@ state = kOpen
   `close_device` + `destroy_handle` → 退避重试（100/200/400/800/1600 ms，最多 5 次）
   重新 `enumerate → create → open → configure` → 成功置 `kOpen`（**不自动开始取流**，
   与 HAL「recover 回到可 start 状态」一致）。
+  审计 H15：`recover()` **不清**会话级计数器与 `sequence_`——清零只在用户主动
+  `open()` 时由 `reset_session_counters_locked()` 做。否则自动恢复一次之后，
+  消费者看到 `sequence` 从 1000 掉回 1（断帧/乱序判定失效），统计也会丢掉掉线前的
+  累计，现场表现成「掉线过，但一帧没丢」。
 
 ## 5. 取流线程与帧池
 

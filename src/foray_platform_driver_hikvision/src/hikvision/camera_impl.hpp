@@ -91,6 +91,13 @@ class CameraImpl final : public hal::Camera {
 
     Result<void> recover_locked();
 
+    /// @brief 清零会话级计数器与 `sequence_`；**只由 `open()` 调用**（审计 H15）。
+    ///
+    /// `recover()` 复用 `open_locked()`，若在那里清零，自动恢复后消费者会看到
+    /// `sequence` 从 1000 掉回 1（断帧/乱序判定失效），统计也会丢掉"掉线前"的累计，
+    /// 现场表现成"掉线过但一帧没丢"。
+    void reset_session_counters_locked();
+
     /// @brief `open_locked()` 的设备配置阶段，成功后设备可开始取流。
     Result<void> configure_locked(const DeviceDescriptor& device);
 

@@ -439,6 +439,47 @@ TEST(HikvisionCamera, RecoverReopensAndRestreams) {
     EXPECT_GE(harness.camera->stats().reconnects, 1U);
 }
 
+/**
+ * @brief 审计 H15：`recover()` 不许把 `sequence_` 与会话统计清零。
+ *
+ * 改前 `recover()` 复用 `open_locked()`，而 `open_locked()` 里顺手把 `sequence_`、
+ * `frames_received_`、`timeouts_` 等全部归零：自动恢复一次之后，消费者看到 sequence
+ * 从 3 掉回 1（断帧/乱序判定直接失效），统计看起来像"从没收到过帧"——现场只能看到
+ * `reconnects` 涨了，于是"掉线过，但一帧没丢"。
+ *
+ * 现在清零只在用户主动 `open()` 时发生（`reset_session_counters_locked()`），
+ * 恢复后计数器接着往上走。
+ */
+TEST(HikvisionCamera, RecoverKeepsSequenceAndSessionCounters) {
+    Harness harness;
+    harness.stream_ok();
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    for (std::uint32_t index = 1; index <= 3; ++index) {
+        harness.api->push_frame(make_frame(mono8_frame_info(index)));
+        ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok()) << "第 " << index << " 帧";
+        ASSERT_EQ(lease->sequence, index);
+    }
+    const auto before = harness.camera->stats();
+    ASSERT_EQ(before.frames_received, 3U);
+    ASSERT_EQ(before.last_sequence, 3U);
+
+    harness.api->fire_exception(detail::mvs_error::kUdpRecvData);
+    ASSERT_TRUE(wait_for_state(*harness.camera, hal::DeviceState::kError));
+    ASSERT_TRUE(harness.camera->recover().ok());
+
+    const auto after = harness.camera->stats();
+    EXPECT_GE(after.reconnects, 1U);
+    EXPECT_EQ(after.frames_received, before.frames_received);
+    EXPECT_EQ(after.last_sequence, before.last_sequence);
+    EXPECT_GE(after.timeouts, before.timeouts);
+
+    // 序号续着走，不回退。
+    harness.api->push_frame(make_frame(mono8_frame_info(4)));
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+    EXPECT_EQ(lease->sequence, 4U);
+}
+
 // ---------------------------------------------------------------------------
 // 取流与读帧
 // ---------------------------------------------------------------------------

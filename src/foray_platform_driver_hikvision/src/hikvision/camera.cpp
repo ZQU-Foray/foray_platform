@@ -251,6 +251,11 @@ hal::SensorStats CameraImpl::stats() const noexcept {
 
 Result<void> CameraImpl::open() {
     std::lock_guard<std::mutex> lock(control_mutex_);
+    // 审计 H15：会话级计数器与 `sequence_` 只在这里（用户主动 open）清零。
+    // `recover()` 复用的是 `open_locked()`，它不能再清——否则一次自动恢复之后
+    // 消费者看到 sequence 从 1000 掉回 1（断帧/乱序判定失效），统计也从"掉线过、
+    // 恢复了"变成"一次都没掉线"。
+    reset_session_counters_locked();
     return open_locked();
 }
 
@@ -324,22 +329,30 @@ Result<void> CameraImpl::open_locked() {
         info_ = std::move(built);
     }
 
+    // 审计 H15：这里只清「本次打开」相关的瞬时状态。会话级计数器与 `sequence_`
+    // 归 `reset_session_counters_locked()`（只在用户 open() 时调），因为 recover()
+    // 也走这条路径，清掉会让一次自动恢复看起来像换了个新相机。
+    consecutive_errors_.store(0, std::memory_order_relaxed);
+
+    state_.store(hal::DeviceState::kOpen, std::memory_order_release);
+    return Result<void>();
+}
+
+void CameraImpl::reset_session_counters_locked() {
+    // 只在 open() 调用；见头文件对会话级计数器的说明（审计 H15）。
     frames_received_.store(0, std::memory_order_relaxed);
     frames_delivered_.store(0, std::memory_order_relaxed);
     frames_dropped_.store(0, std::memory_order_relaxed);
     bytes_received_.store(0, std::memory_order_relaxed);
     timeouts_.store(0, std::memory_order_relaxed);
     sdk_errors_.store(0, std::memory_order_relaxed);
-    consecutive_errors_.store(0, std::memory_order_relaxed);
+    reconnects_.store(0, std::memory_order_relaxed);
     last_sequence_.store(0, std::memory_order_relaxed);
     last_vendor_code_.store(0, std::memory_order_relaxed);
     last_frame_stamp_ns_.store(0, std::memory_order_relaxed);
     last_receive_stamp_ns_.store(0, std::memory_order_relaxed);
     sequence_ = 0;
     last_device_frame_number_ = 0;
-
-    state_.store(hal::DeviceState::kOpen, std::memory_order_release);
-    return Result<void>();
 }
 
 Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
