@@ -6,6 +6,8 @@
 
 #include "foray/platform/link/robolink_byte_channel.hpp"
 #include "foray/platform/link/robolink_codec.hpp"
+#include "foray/platform/result/error.hpp"
+#include "foray/platform/result/result.hpp"
 
 namespace foray::platform::link {
 
@@ -28,7 +30,18 @@ public:
     HostLinkState step(std::uint64_t now_ms);
 
     // 只有收到有效握手和状态回读后才允许排入控制快照；序号由本链路统一分配。
-    bool queue_control(ControlSnapshot snapshot, std::uint64_t now_ms);
+    //
+    // 返回值区分「链路不在 Active」（`kNotOpen`）与「字节通道正忙」（`kBusy`），
+    // 不再用一个 bool 把两种完全不同的原因混在一起（审计 H5）。通道忙时快照会
+    // 存进邮箱，由下一次 `step()` 在通道空出后补发：控制快照是状态量，最新的
+    // 就足够，被覆盖的旧快照计入 `coalesced_controls()`。
+    Result<void> queue_control(ControlSnapshot snapshot, std::uint64_t now_ms);
+
+    // 从未发出的控制快照数（被更新快照覆盖，或补发时通道再次拒绝）。非零说明
+    // 调用方下发频率高于链路可承受速率，需要降频，而不是当作丢包忽略。
+    std::uint64_t coalesced_controls() const noexcept {
+        return coalesced_controls_;
+    }
 
     HostLinkState state() const { return state_; }
     const std::optional<SystemStatus>& latest_status() const { return latest_status_; }
@@ -38,6 +51,8 @@ private:
     void disconnect(std::uint64_t now_ms);
     void queue_hello(std::uint64_t now_ms);
     bool queue_heartbeat(std::uint64_t now_ms);
+    Result<void> send_control(const ControlSnapshot& snapshot, std::uint64_t now_ms);
+    void flush_pending_control(std::uint64_t now_ms);
 
     UsbCdcPort& port_;
     RoboLinkByteChannel channel_;
@@ -53,6 +68,9 @@ private:
     std::uint16_t hello_seq_ = 0;
     std::uint16_t control_message_seq_ = 0;
     std::uint32_t control_seq_ = 0;
+    // 通道忙时暂存的最新控制快照；断链会清空，避免把过期意图带给重连后的电控。
+    std::optional<ControlSnapshot> pending_control_;
+    std::uint64_t coalesced_controls_ = 0;
 };
 
 }  // namespace foray::platform::link

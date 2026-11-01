@@ -11,4 +11,10 @@
 5. `foray_interfaces` 已合入 RoboLink v0.2 候选稿：云台姿态独立使用 `GIMBAL_ATTITUDE`（0x30、36 B），四元数 `w,x,y,z` 表示云台系到世界系，另有采样时刻与有效位。本地已实现离线解码；仍需与电控固件逐字节对账和实机验收，不能把四元数塞入 `SYSTEM_STATUS` 保留字节。
 6. **控制前阻断项**：v0.2 的 `CONTROL_SNAPSHOT.gimbal_yaw/pitch` 是世界系目标角；当前自瞄 `aim_at()` 从云台系目标向量直接算出的角度不可未经当前姿态转换就原样下发。完成相机/云台外参与图像—IMU 时间对齐、世界系目标角转换和禁能联调前，不启用真实云台控制。
 
+PC 侧控制下发语义（2026-11-01，审计 H5）：`queue_control()` 返回 `Result<void>`，
+`kNotOpen` 表示链路未进入 Active（没握手成功或没收到状态回读），`kBusy` 表示字节通道
+拒绝排入。通道里压着上一条帧时，新快照不会丢，而是进入邮箱等待补发——控制快照是
+状态量，最新的那份就是当前意图，被更新快照覆盖的旧快照计入 `coalesced_controls()`；
+该计数持续增长说明调用方下发频率高于链路可承受速率，应当降频，而不是当成正常丢帧。
+
 离线验证：`colcon build --packages-select foray_platform` 与 `colcon test --packages-select foray_platform`；测试数量和结果以本地最新 `colcon test-result` 为准。请电控对照自己的独立测试向量，而非只依据 PC 侧编码后再解码的往返测试。

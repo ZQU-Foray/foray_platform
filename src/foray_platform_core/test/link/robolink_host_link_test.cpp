@@ -1,5 +1,6 @@
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <pty.h>
 #include <unistd.h>
 
@@ -76,6 +77,14 @@ void send_keep_alive(int master) {
     send_slot(master, slot);
 }
 
+/// @brief 从控制快照载荷里取出 `chassis_vx`（偏移 8，小端 IEEE-754）。
+float chassis_vx_of(const std::vector<std::uint8_t>& payload) {
+    EXPECT_GE(payload.size(), 12u);
+    float value = 0;
+    std::memcpy(&value, payload.data() + 8, sizeof(value));
+    return value;
+}
+
 TEST(RoboLinkHostLink, HandshakeStatusControlAndTimeout)
 {
     TerminalPair terminal;
@@ -100,7 +109,10 @@ TEST(RoboLinkHostLink, HandshakeStatusControlAndTimeout)
 
     foray::platform::link::ControlSnapshot control;
     control.flags = 0x0002;
-    EXPECT_FALSE(link.queue_control(control, 0));  // 握手前不能发送控制。
+    // 握手前不能发送控制：现在能分清「没连上」（kNotOpen）和「排不上队」（kBusy）。
+    const auto before_hello = link.queue_control(control, 0);
+    EXPECT_FALSE(before_hello.ok());
+    EXPECT_EQ(before_hello.error().code, foray::platform::ErrorCode::kNotOpen);
 
     foray::platform::link::HelloAck ack;
     ack.acked_msg_seq = hello_slot->sequence;
@@ -110,7 +122,9 @@ TEST(RoboLinkHostLink, HandshakeStatusControlAndTimeout)
     ack_slot.payload = foray::platform::link::encode_hello_ack_payload(ack);
     send_slot(terminal.master, ack_slot);
     EXPECT_EQ(link.step(1), foray::platform::link::HostLinkState::Ready);
-    EXPECT_FALSE(link.queue_control(control, 1));  // 状态尚未回读。
+    const auto before_status = link.queue_control(control, 1);
+    EXPECT_FALSE(before_status.ok()); // 状态尚未回读：仍未进入 Active。
+    EXPECT_EQ(before_status.error().code, foray::platform::ErrorCode::kNotOpen);
 
     foray::platform::link::RoboLinkSlot status_slot;
     status_slot.type = 0x10;
@@ -135,7 +149,7 @@ TEST(RoboLinkHostLink, HandshakeStatusControlAndTimeout)
     EXPECT_EQ(link.latest_attitude()->frame_timestamp_us, 1000u);
     EXPECT_EQ(link.latest_attitude()->received_at_ms, 2u);
 
-    EXPECT_TRUE(link.queue_control(control, 3));
+    EXPECT_TRUE(link.queue_control(control, 3).ok());
     EXPECT_EQ(link.step(3), foray::platform::link::HostLinkState::Active);
     std::array<std::uint8_t, 128> control_bytes{};
     const ssize_t control_count = ::read(terminal.master, control_bytes.data(),
@@ -151,7 +165,67 @@ TEST(RoboLinkHostLink, HandshakeStatusControlAndTimeout)
     EXPECT_FALSE(port.is_open());
     EXPECT_FALSE(link.latest_status().has_value());
     EXPECT_FALSE(link.latest_attitude().has_value());
-    EXPECT_FALSE(link.queue_control(control, 503));
+    EXPECT_FALSE(link.queue_control(control, 503).ok());
+}
+
+/// @brief 通道还压着上一条帧时，控制快照进邮箱而不是被丢掉（审计 H5）。
+TEST(RoboLinkHostLink, BusyChannelQueuesLatestControlInsteadOfDropping) {
+    TerminalPair terminal;
+    ASSERT_TRUE(terminal.open());
+    foray::platform::link::UsbCdcPort port(terminal.path);
+    foray::platform::link::RoboLinkHostLink link(port);
+
+    EXPECT_EQ(link.step(0), foray::platform::link::HostLinkState::HelloPending);
+    send_hello_ack(terminal.master, read_hello_sequence(terminal.master));
+    EXPECT_EQ(link.step(1), foray::platform::link::HostLinkState::Ready);
+
+    foray::platform::link::RoboLinkSlot status_slot;
+    status_slot.type = 0x10;
+    status_slot.payload.resize(28);
+    send_slot(terminal.master, status_slot);
+    EXPECT_EQ(link.step(2), foray::platform::link::HostLinkState::Active);
+
+    // 第一条排进字节通道（此时通道里已有待写数据），后两条只能进邮箱。
+    foray::platform::link::ControlSnapshot first;
+    first.flags = 0x0002;
+    first.chassis_vx = 1.0f;
+    foray::platform::link::ControlSnapshot second;
+    second.flags = 0x0004;
+    second.chassis_vx = 2.0f;
+    foray::platform::link::ControlSnapshot third;
+    third.flags = 0x0008;
+    third.chassis_vx = 3.0f;
+    ASSERT_TRUE(link.queue_control(first, 3).ok());
+    EXPECT_TRUE(link.queue_control(second, 3).ok()); // 通道忙：进邮箱，仍然返回成功。
+    EXPECT_EQ(link.coalesced_controls(), 0u);        // 邮箱本来是空的，没有覆盖。
+    EXPECT_TRUE(link.queue_control(third, 3).ok());
+    EXPECT_EQ(link.coalesced_controls(), 1u); // third 覆盖了 second。
+
+    // step(3) 把通道里的第一条写出去，并把邮箱里的最新快照排进通道；
+    // 补发的这一条由下一次 step 写出去（每步只做一次非阻塞 flush）。
+    EXPECT_EQ(link.step(3), foray::platform::link::HostLinkState::Active);
+    EXPECT_EQ(link.coalesced_controls(), 1u); // 已排进通道，没有额外丢。
+    EXPECT_EQ(link.step(4), foray::platform::link::HostLinkState::Active);
+    std::array<std::uint8_t, 256> bytes{};
+    ssize_t total = 0;
+    while (total < 144) {
+        const ssize_t got = ::read(terminal.master, bytes.data() + total,
+                                   bytes.size() - static_cast<std::size_t>(total));
+        ASSERT_GT(got, 0);
+        total += got;
+    }
+    const auto first_frame =
+        foray::platform::link::decode_single_slot_frame({bytes.begin(), bytes.begin() + 72});
+    ASSERT_TRUE(first_frame.has_value());
+    EXPECT_EQ(first_frame->payload[6], 0x02u); // first.flags 低字节。
+    EXPECT_FLOAT_EQ(1.0f, chassis_vx_of(first_frame->payload));
+
+    const auto second_frame =
+        foray::platform::link::decode_single_slot_frame({bytes.begin() + 72, bytes.begin() + 144});
+    ASSERT_TRUE(second_frame.has_value());
+    EXPECT_EQ(second_frame->payload[6], 0x08u); // 补发的是 third，不是被覆盖的 second。
+    EXPECT_FLOAT_EQ(3.0f, chassis_vx_of(second_frame->payload));
+    EXPECT_EQ(link.coalesced_controls(), 1u); // 补发成功，不再累加。
 }
 
 TEST(RoboLinkHostLink, InvalidHandshakeDoesNotEnableControl)

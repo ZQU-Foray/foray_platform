@@ -27,6 +27,8 @@ void RoboLinkHostLink::disconnect(std::uint64_t now_ms)
     state_ = HostLinkState::Disconnected;
     latest_status_.reset();
     latest_attitude_.reset();
+    // 重连后电控状态已变，旧快照不再代表任何有效意图。
+    pending_control_.reset();
     next_open_ms_ = now_ms + kOpenRetryMs;
 }
 
@@ -144,25 +146,55 @@ HostLinkState RoboLinkHostLink::step(std::uint64_t now_ms)
         } else if (written > 0) {
             last_tx_ms_ = now_ms;
         }
+        flush_pending_control(now_ms);
     } catch (const std::system_error&) {
         disconnect(now_ms);
     }
     return state_;
 }
 
-bool RoboLinkHostLink::queue_control(ControlSnapshot snapshot, std::uint64_t now_ms)
-{
-    if (state_ != HostLinkState::Active || !port_.is_open()) return false;
-    if (channel_.has_pending_write()) return false;
-    snapshot.control_seq = control_seq_;
+Result<void> RoboLinkHostLink::queue_control(ControlSnapshot snapshot, std::uint64_t now_ms) {
+    if (state_ != HostLinkState::Active || !port_.is_open()) {
+        return Result<void>(make_error(
+            ErrorCode::kNotOpen, "链路未进入 Active：控制快照只能在握手成功且收到状态回读后下发"));
+    }
+    if (channel_.has_pending_write()) {
+        // 上一条帧还没写出去。控制快照是状态量而不是事件量，旧的这份已经过期，
+        // 最新覆盖它不会丢「当前意图」；但覆盖要计数，别让调用方以为每帧都发出去了。
+        if (pending_control_.has_value()) {
+            ++coalesced_controls_;
+        }
+        pending_control_ = std::move(snapshot);
+        return Result<void>();
+    }
+    return send_control(snapshot, now_ms);
+}
+
+Result<void> RoboLinkHostLink::send_control(const ControlSnapshot& snapshot, std::uint64_t now_ms) {
+    ControlSnapshot sequenced = snapshot;
+    sequenced.control_seq = control_seq_;
     const auto frame = make_control_snapshot_frame(
-        frame_seq_, static_cast<std::uint32_t>(now_ms * 1000),
-        control_message_seq_, snapshot);
-    if (!channel_.queue_frame(frame)) return false;
+        frame_seq_, static_cast<std::uint32_t>(now_ms * 1000), control_message_seq_, sequenced);
+    if (!channel_.queue_frame(frame)) {
+        return Result<void>(make_error(ErrorCode::kBusy, "字节通道拒绝排入控制帧"));
+    }
     ++frame_seq_;
     ++control_message_seq_;
     ++control_seq_;
-    return true;
+    return Result<void>();
+}
+
+void RoboLinkHostLink::flush_pending_control(std::uint64_t now_ms) {
+    if (!pending_control_.has_value() || state_ != HostLinkState::Active ||
+        channel_.has_pending_write()) {
+        return;
+    }
+    if (auto status = send_control(*pending_control_, now_ms); !status.ok()) {
+        // 通道刚被确认是空的却仍然排不进：不静默丢，留在邮箱并计数，下一轮再试。
+        ++coalesced_controls_;
+        return;
+    }
+    pending_control_.reset();
 }
 
 }  // namespace foray::platform::link
