@@ -341,11 +341,11 @@ Result<void> CameraImpl::read(FrameLease<ImageFrame>& out, time::Duration timeou
 | `pixel_format` | `PixelFormat` | `SetEnumValue` | 只映射到 8 位 Mono/Bayer；对应 `PixelType_Gvsp_*` 常量（PixelType.h:41/51–54） |
 | `frame_rate_enable` | `AcquisitionFrameRateEnable` | `SetBoolValue` | 只在显式限速时置 true |
 | `frame_rate_hz` | `AcquisitionFrameRateEnable=true` + `AcquisitionFrameRate` | `SetBoolValue` + `SetFloatValue` | 触发模式下已由 binder 拒绝；不要用废弃的 `MV_CC_SetFrameRate` |
-| `exposure_us` | `ExposureAuto=Off` + `ExposureTime` | `SetEnumValue` + `SetFloatValue` | 未设置表示不写 |
-| `exposure_auto` | `ExposureAuto` | `SetEnumValue` | 非 `Off` 时设备接管曝光，忽略 `exposure_us` |
+| `exposure_us` | `ExposureTime`（仅 `ExposureAuto=Off` 后） | `SetFloatValue` | 未设置表示不写；自动模式下**不下发**（节点只读，见下） |
+| `exposure_auto` | `ExposureAuto` | `SetEnumValue` | 非 `Off` 时设备接管曝光，本条配置里的 `exposure_us` 不下发 |
 | `exposure_auto_lower_us` / `exposure_auto_upper_us` | `AutoExposureTimeLowerLimit` / `AutoExposureTimeUpperLimit` | `SetFloatValue` | 仅自动曝光时有效 |
-| `gain_db` | `GainAuto=Off` + `Gain` | `SetEnumValue` + `SetFloatValue` | 未设置表示不写 |
-| `gain_auto` | `GainAuto` | `SetEnumValue` | 非 `Off` 时忽略 `gain_db` |
+| `gain_db` | `Gain`（仅 `GainAuto=Off` 后） | `SetFloatValue` | 未设置表示不写；自动模式下**不下发** |
+| `gain_auto` | `GainAuto` | `SetEnumValue` | 非 `Off` 时本条配置里的 `gain_db` 不下发 |
 | `gain_auto_lower_db` / `gain_auto_upper_db` | `AutoGainLowerLimit` / `AutoGainUpperLimit` | `SetFloatValue` | 仅自动增益时有效 |
 | `trigger.mode = kOff` | `TriggerMode=Off` | `SetEnumValue` | `MV_TRIGGER_MODE_OFF = 0`（CameraParams.h:866） |
 | `trigger.mode = kLine0..kLine3` | `TriggerMode=On` + `TriggerSource=Line0..3` | 两次 `SetEnumValue` | 硬件触发 |
@@ -354,6 +354,12 @@ Result<void> CameraImpl::read(FrameLease<ImageFrame>& out, time::Duration timeou
 | `trigger.activation` | `TriggerActivation` | `SetEnumValueByString` | 用字符串（`RisingEdge`/`FallingEdge`/`LevelHigh`/`LevelLow`）避开型号枚举差异 |
 | `trigger.debounce_us` | `LineDebouncerTime` | `SetFloatValue` | 已由 binder 映射 |
 | `sdk_node_count` | —（函数） | `MV_CC_SetImageNodeNum` | 必须在 `StartGrabbing` 之前 |
+
+> **自动模式下的只读节点（审计 H11）**：`ExposureTime` 与 `Gain` 在 `ExposureAuto`/`GainAuto`
+> 不为 `Off` 时是只读节点，写入会返回 `MV_E_GC_ACCESS`。因此 `open()` 阶段遇到「自动模式 +
+> 手动值」只跳过手动值并把次数累加到 `stats.sdk_errors`（不阻断打开），而运行期
+> `apply_tuning()` 改手动值时若设备仍在自动模式，会直接返回 `kNotSupported` 并说明原因——
+> 不再让一个语焉不详的 SDK 错误码自己漂上来。
 | `enable_ptp` | `GevIEEE1588` | `SetBoolValue` | 仅 GigE；USB3 配 PTP → `kNotSupported` |
 | `buffer_count` | —（HAL 帧池） | — | 槽数 `max(2, buffer_count)` |
 | `pool_memory_limit_bytes` | —（HAL 帧池） | — | 0 表示不限制；超限时 `kQueueFull` |

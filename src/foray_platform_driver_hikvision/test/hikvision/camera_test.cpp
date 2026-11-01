@@ -99,6 +99,10 @@ struct Harness {
         api->int_values[std::string(node::kWidth)] = 720;
         api->int_values[std::string(node::kHeight)] = 540;
 
+        // 设备开机默认手动曝光/增益：运行期写 ExposureTime / Gain 的前置条件（审计 H11）。
+        api->enum_values.emplace(std::string(node::kExposureAuto), "Off");
+        api->enum_values.emplace(std::string(node::kGainAuto), "Off");
+
         config.selector.serial = "DB0985207";
         config.width = 720;
         config.height = 540;
@@ -614,6 +618,19 @@ TEST(HikvisionCamera, SetExposureDelegatesToApply) {
 
     ASSERT_TRUE(status.ok()) << status.error().message;
     EXPECT_TRUE(harness.api->last_write(node::kExposureTime).has_value());
+}
+
+/// @brief 自动曝光下 `set_exposure()` 必须失败并说清原因（审计 H11）。
+TEST(HikvisionCamera, SetExposureRejectedWhileAuto) {
+    Harness harness;
+    harness.open_ok();
+    harness.api->enum_values[std::string(node::kExposureAuto)] = "Continuous";
+
+    const auto status = harness.camera->set_exposure(2500.0);
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kNotSupported);
+    EXPECT_FALSE(harness.api->last_write(node::kExposureTime).has_value());
 }
 
 /// @brief 段落级失败要保留 MVS 原始码，便于现场定位。

@@ -59,6 +59,10 @@ inline constexpr std::string_view kDeviceTicksFrequency = "DeviceTicksFrequency"
  * - GigE 调优（包长、包间隔、心跳）与 PTP 使能属于尽力而为：失败只累加到
  *   `optional_errors`，不阻断 open。现场网卡差异大，这类写失败不该让相机不可用。
  *
+ * 另外两种「配置要求但设备不让」的情况也计入 `optional_errors` 而不阻断 open：
+ * 自动模式下 `ExposureTime` / `Gain` 是只读节点（`MV_E_GC_ACCESS`，审计 H11），
+ * 此时跳过手动值并让上层在 `stats.sdk_errors` 上看到「配置里的手动值没生效」。
+ *
  * @param optional_errors 输出参数，累加可选写失败的次数。
  */
 Result<void> apply_config(MvsApi& api, void* handle, const hal::CameraConfig& config,

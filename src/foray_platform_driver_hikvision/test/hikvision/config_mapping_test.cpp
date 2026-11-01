@@ -17,6 +17,12 @@ struct MappingFixture {
     test::MockMvsApi api;
     std::uint32_t optional_errors = 0;
 
+    MappingFixture() {
+        // 设备开机默认手动曝光/增益：运行期写 ExposureTime / Gain 的前置条件（审计 H11）。
+        api.enum_values.emplace(std::string(node::kExposureAuto), "Off");
+        api.enum_values.emplace(std::string(node::kGainAuto), "Off");
+    }
+
     Result<void> apply(const hal::CameraConfig& config) {
         return detail::apply_config(api, nullptr, config, optional_errors);
     }
@@ -168,7 +174,7 @@ TEST(HikvisionConfigMapping, FrameRateValueOmittedWhenUnset) {
 }
 
 /// @brief 自动曝光模式下仍下发手动值，便于后续切回手动时沿用。
-TEST(HikvisionConfigMapping, ExposureAutoWritesLimits) {
+TEST(HikvisionConfigMapping, ExposureAutoSkipsManualValueButKeepsLimits) {
     MappingFixture fixture;
     hal::CameraConfig config;
     config.width = 720;
@@ -178,11 +184,17 @@ TEST(HikvisionConfigMapping, ExposureAutoWritesLimits) {
     config.exposure_auto_lower_us = 100.0;
     config.exposure_auto_upper_us = 9000.0;
 
-    ASSERT_TRUE(fixture.apply(config).ok());
+    const auto status = fixture.apply(config);
+
+    // 审计 H11：旧实现把 exposure_us 也捏到自动模式上，MVS 返回 MV_E_GC_ACCESS
+    // （ExposureTime 在自动模式下只读），整条 open() 因此失败。现在跳过手动值、
+    // 计入可选错误，并保留自动曝光的量程下发。
+    ASSERT_TRUE(status.ok());
     EXPECT_TRUE(fixture.wrote(node::kExposureAuto, "Continuous"));
-    EXPECT_TRUE(fixture.touched(node::kExposureTime));
+    EXPECT_FALSE(fixture.touched(node::kExposureTime));
     EXPECT_TRUE(fixture.touched(node::kExposureLowerLimit));
     EXPECT_TRUE(fixture.touched(node::kExposureUpperLimit));
+    EXPECT_EQ(fixture.optional_errors, 1U);
 }
 
 /// @brief 手动曝光模式只写 `ExposureAuto=Off` 与曝光时间，不碰上下限。
@@ -200,8 +212,8 @@ TEST(HikvisionConfigMapping, ManualExposureSkipsAutoLimits) {
     EXPECT_FALSE(fixture.touched(node::kExposureLowerLimit));
 }
 
-/// @brief 增益与曝光同构：`GainAuto` 加手动值加自动上下限。
-TEST(HikvisionConfigMapping, GainWritesAutoAndLimits) {
+/// @brief 增益与曝光同构：自动增益下只下发量程，不下发 `Gain`（审计 H11）。
+TEST(HikvisionConfigMapping, GainAutoSkipsManualValueButKeepsLimits) {
     MappingFixture fixture;
     hal::CameraConfig config;
     config.width = 720;
@@ -211,11 +223,14 @@ TEST(HikvisionConfigMapping, GainWritesAutoAndLimits) {
     config.gain_auto_lower_db = 0.0;
     config.gain_auto_upper_db = 24.0;
 
-    ASSERT_TRUE(fixture.apply(config).ok());
+    const auto status = fixture.apply(config);
+
+    ASSERT_TRUE(status.ok());
     EXPECT_TRUE(fixture.wrote(node::kGainAuto, "Once"));
-    EXPECT_TRUE(fixture.touched(node::kGain));
+    EXPECT_FALSE(fixture.touched(node::kGain));
     EXPECT_TRUE(fixture.touched(node::kGainLowerLimit));
     EXPECT_TRUE(fixture.touched(node::kGainUpperLimit));
+    EXPECT_EQ(fixture.optional_errors, 1U);
 }
 
 /// @brief 触发关闭时只写 `TriggerMode=Off`，不得残留 Software/Line 配置。
@@ -388,6 +403,51 @@ TEST(HikvisionConfigMapping, TuningExposureWritesValueOnly) {
     ASSERT_TRUE(exposure.has_value());
     EXPECT_NE(exposure->find("2500"), std::string::npos);
     EXPECT_FALSE(fixture.touched(node::kExposureAuto));
+}
+
+/// @brief 自动曝光下改手动曝光时间是只读节点冲突，必须报明确错误（审计 H11）。
+TEST(HikvisionConfigMapping, TuningExposureRejectedWhileAuto) {
+    MappingFixture fixture;
+    fixture.api.enum_values[std::string(node::kExposureAuto)] = "Continuous";
+    hal::CameraTuning tuning;
+    tuning.exposure_us = std::optional<double>(2500.0);
+
+    const auto status = fixture.tune(tuning);
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kNotSupported);
+    EXPECT_NE(status.error().message.find("ExposureAuto"), std::string::npos);
+    EXPECT_FALSE(fixture.touched(node::kExposureTime));
+}
+
+/// @brief 自动增益下改手动增益同理。
+TEST(HikvisionConfigMapping, TuningGainRejectedWhileAuto) {
+    MappingFixture fixture;
+    fixture.api.enum_values[std::string(node::kGainAuto)] = "Once";
+    hal::CameraTuning tuning;
+    tuning.gain_db = std::optional<double>(12.5);
+
+    const auto status = fixture.tune(tuning);
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kNotSupported);
+    EXPECT_NE(status.error().message.find("GainAuto"), std::string::npos);
+    EXPECT_FALSE(fixture.touched(node::kGain));
+}
+
+/// @brief 读不回自动模式时不得猜「手动」，直接失败（本仓禁止静默兜底）。
+TEST(HikvisionConfigMapping, TuningExposureRequiresReadableAutoMode) {
+    MappingFixture fixture;
+    fixture.api.enum_values.erase(std::string(node::kExposureAuto));
+    hal::CameraTuning tuning;
+    tuning.exposure_us = std::optional<double>(2500.0);
+
+    const auto status = fixture.tune(tuning);
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kSdkError);
+    EXPECT_NE(status.error().message.find("ExposureAuto"), std::string::npos);
+    EXPECT_FALSE(fixture.touched(node::kExposureTime));
 }
 
 /// @brief 运行期去抖为 0 时明确写 0，而不是跳过。
