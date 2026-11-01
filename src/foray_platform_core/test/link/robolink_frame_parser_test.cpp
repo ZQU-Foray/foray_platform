@@ -105,4 +105,24 @@ TEST(RoboLinkFrameParser, RejectsBadCrcAndRecovers)
     EXPECT_EQ(parsed[0], as_vector(good));
 }
 
-}  // namespace
+TEST(RoboLinkFrameParser, BadCrcDoesNotSwallowFollowingFrames) {
+    foray::platform::link::RoboLinkFrameParser parser;
+    auto corrupted = foray::platform::link::make_keepalive_frame(6, 600);
+    // 把声明长度改成 40：帧头各项校验全过，但这一帧实际只有 18 字节。
+    // CRC 必然失败，此时「按声明长度整段丢弃」会吃掉后面两个真帧。
+    corrupted[4] = 40;
+    corrupted[5] = 0;
+    const auto second = foray::platform::link::make_keepalive_frame(7, 700);
+    const auto third = foray::platform::link::make_keepalive_frame(8, 800);
+    std::vector<std::uint8_t> bytes(corrupted.begin(), corrupted.end());
+    bytes.insert(bytes.end(), second.begin(), second.end());
+    bytes.insert(bytes.end(), third.begin(), third.end());
+
+    const auto parsed = parser.feed(bytes.data(), bytes.size());
+
+    ASSERT_EQ(parsed.size(), 2u);
+    EXPECT_EQ(parsed[0], as_vector(second));
+    EXPECT_EQ(parsed[1], as_vector(third));
+}
+
+} // namespace

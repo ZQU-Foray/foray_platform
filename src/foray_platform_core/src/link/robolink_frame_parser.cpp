@@ -84,9 +84,13 @@ std::vector<std::vector<std::uint8_t>> RoboLinkFrameParser::feed(
             crc32_iso_hdlc(pending_.data(), frame_size - kCrcSize);
         if (actual_crc == expected_crc) {
             frames.emplace_back(pending_.begin(), pending_.begin() + frame_size);
+            pending_.erase(pending_.begin(), pending_.begin() + frame_size);
+            continue;
         }
-        // CRC 失败时丢弃本候选帧，继续扫描帧尾之后的数据。
-        pending_.erase(pending_.begin(), pending_.begin() + frame_size);
+        // CRC 失败说明这段字节不是合法帧，换句话说 `frame_size` 本身也不可信：
+        // 它来自一个刚被证伪的帧头。按它整段丢弃会连带吃掉紧随其后的真帧
+        // （审计 H2），所以和假帧头一样只丢一个字节，从第二个字节重新对齐。
+        pending_.erase(pending_.begin());
     }
 
     return frames;
