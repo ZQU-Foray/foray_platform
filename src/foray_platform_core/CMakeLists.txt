@@ -136,6 +136,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/hal/frame_pool_test.cpp
         test/hal/config_binder_test.cpp
         test/hal/fake_sensor_test.cpp
+        test/net/process_test.cpp
         test/net/net_types_test.cpp
         test/net/probe_test.cpp
         test/net/setup_test.cpp

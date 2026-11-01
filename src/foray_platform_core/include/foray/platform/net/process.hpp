@@ -21,6 +21,10 @@ class ProcessRunner {
     virtual Result<ProcessOutput> run(const std::vector<std::string>& argv) = 0;
 };
 
+/// 真实实现：`fork` + `execvp`，stdout / stderr 用 `poll` 并发读到底。
+///
+/// 该调用**阻塞到子进程关闭两个输出管道为止**，没有超时——调用方要么给会被
+/// 杀掉的短命令（`nmcli` 之类），要么自己加看护；不要用它跑长驻进程。
 class ExecProcessRunner final : public ProcessRunner {
   public:
     Result<ProcessOutput> run(const std::vector<std::string>& argv) override;
