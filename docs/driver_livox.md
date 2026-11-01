@@ -49,10 +49,36 @@ SDK 回调线程
   └─ open/start/stop/close/recover；commands 不在回调里执行
 ```
 
-- 回调路径不加锁、不分配、不打日志；队列满时计数并丢包；
+- 回调路径不分配、不打日志、不拿互斥量（只一次 `atomic_flag` 串行化，见 §2.1）；
+  队列满时计数并丢包；
 - 原始包环默认 4096 槽 × 1500 B（约 6 MB/雷达）；
 - 解析线程轮询间隔 200 µs，10 Hz 点云下额外延迟可忽略；
 - `FramePool` 采用最新帧邮箱，消费者慢时丢旧帧并累计 `dropped`。
+
+### 2.1 SDK 回调是否同线程：不能假设
+
+点云与 IMU 是**两条独立的 SDK 回调注册**（`set_point_cloud_callback` /
+`set_imu_callback`），两者都进同一个 `CallbackSink::push()`，也就是同一个
+`SpscQueue<PacketSlot>`；而 `SpscQueue` 只允许**一个**生产者。
+
+- SDK2 的公开接口没有承诺这两条回调在同一个线程上触发。官方
+  `livox_ros_driver2` 恰好把它们放在同一个回调线程里（`pub_handler.cpp` 的
+  `PollCallback`），但那是它的实现细节，不是 API 契约；
+- 若 SDK 真的用两个线程回调，两个线程同时写队列头就会丢包甚至读到错槽位
+  （TSan 会直接报 `spsc_queue.hpp` 里 `head_` 的 data race，审计 H20 复现过）；
+- 因此 `push()` 在入队前用一次 `atomic_flag` 把生产者串起来
+  （`CallbackSink::producer_lock_`）。无竞争时成本是一条 `test_and_set`，
+  与每包约 1.4 KB 的 `memcpy` 相比可忽略；真有竞争时让出 CPU 并累加
+  `producer_contended`。
+
+**怎么验证**：`CallbackSink::producer_contended` 是内部计数器（`livox_runtime.hpp`，
+不进公开的 `hal::SensorStats`——不为一条防护指标扩 HAL 契约）。实机确认 SDK 回调线程
+数量时，在 `push()` 里临时打印 `std::this_thread::get_id()`，或在这条计数非 0 时打日志；
+看到两个不同线程 id 且计数增长，就说明当前 SDK 版本是多线程回调，这条串行化是必需的。
+反过来，计数一直为 0 只说明没撞上并发，不能证明 SDK 单线程。
+
+也正因为生产者之间没有顺序保证，解析线程不得依赖点云包与 IMU 包在队列里的相对次序，
+只能按各自包内时间戳归并（见 §6）。
 
 ## 3. SDK 运行时与多雷达
 

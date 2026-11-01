@@ -151,6 +151,7 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/livox/frame_assembler_test.cpp
         test/livox/lidar_test.cpp
         test/livox/livox_control_test.cpp
+        test/livox/callback_sink_test.cpp
     )
     target_include_directories(foray_platform_driver_livox_tests
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

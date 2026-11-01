@@ -34,6 +34,25 @@ struct CallbackSink {
     /// @brief 原始包环形队列；由 sink 与 `Lidar` 共同持有。
     std::shared_ptr<container::SpscQueue<PacketSlot>> queue;
 
+    /// @brief 把 SDK 回调的多个生产者串起来（审计 H20）。
+    ///
+    /// 点云与 IMU 是两条独立的 SDK 回调注册（`set_point_cloud_callback` /
+    /// `set_imu_callback`），SDK2 **没有承诺**它们在同一个线程上回调。官方
+    /// `livox_ros_driver2` 恰好把两类回调放在同一个回调线程里（`pub_handler.cpp`
+    /// 的 `PollCallback`），但那是它的实现细节，不是 API 契约。而
+    /// `container::SpscQueue` 只允许一个生产者，一旦 SDK 真的用两个线程回调，
+    /// 两个线程同时写 `head_` 就会丢包甚至读到错槽位。
+    ///
+    /// 这里的取舍：不拆队列（拆了要按时间戳归并点云与 IMU，改动面大且无法离线
+    /// 验证收益），而是用一次 CAS 把入口串起来。无竞争时成本是一条
+    /// `atomic_flag_test_and_set`，与每包 ~1.4 KB 的 `memcpy` 相比可忽略；
+    /// 真有竞争时用 `yield()` 让出并计入 `producer_contended`，因此"SDK 是双线程"
+    /// 这件事会变成可观测指标，而不是静默腐蚀队列。
+    std::atomic_flag producer_lock_ = ATOMIC_FLAG_INIT;
+
+    /// @brief 抢 `producer_lock_` 时发生竞争的累计次数；非 0 说明 SDK 用了多线程回调。
+    std::atomic<std::uint64_t> producer_contended{0};
+
     /// @brief 选择条件；只在下线前由控制线程写，回调读取。
     std::string serial;
     std::string ip_address;

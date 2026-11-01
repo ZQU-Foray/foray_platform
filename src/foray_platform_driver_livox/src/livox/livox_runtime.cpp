@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <thread>
 #include <utility>
 
 #include "foray/platform/time/clock.hpp"
@@ -32,7 +33,16 @@ void CallbackSink::push(const PacketView& packet) noexcept {
         static_cast<std::uint64_t>(time::SystemClock().now().nanoseconds_since_epoch());
     std::memcpy(slot.data.data(), packet.data, packet.size);
 
-    if (!queue->try_push(std::move(slot))) {
+    // 审计 H20：点云与 IMU 是两条独立的 SDK 回调，不能假设它们同线程；
+    // 队列只允许一个生产者，所以 try_push 之前把入口串起来（无竞争时一次 CAS）。
+    while (producer_lock_.test_and_set(std::memory_order_acquire)) {
+        producer_contended.fetch_add(1, std::memory_order_relaxed);
+        std::this_thread::yield();
+    }
+    const bool pushed = queue->try_push(std::move(slot));
+    producer_lock_.clear(std::memory_order_release);
+
+    if (!pushed) {
         packets_dropped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
