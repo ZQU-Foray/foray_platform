@@ -561,6 +561,44 @@ TEST(HikvisionCamera, RejectsUndersizedFrame) {
     ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
 }
 
+/**
+ * @brief 审计 H14：帧几何与帧池不一致时必须整帧拒绝，不能截断后仍宣告新尺寸。
+ *
+ * 改前只校验 `frame_length >= width*height`，然后 `copy = min(frame_length,
+ * payload_size)`：设备换几何（固件 ROI 对齐修正、恢复 user set、在线改分辨率）后
+ * 帧变大时只拷槽位容量，`out.width/height/stride` 却写的是新值——消费者按
+ * `data + y*stride` 逐行读会越过槽位缓冲，而且这帧不进任何丢帧计数器。
+ *
+ * 现在几何不一致直接 `sdk_errors_++` + `frames_dropped_++` 丢弃，一帧都不发布。
+ */
+TEST(HikvisionCamera, RejectsFrameGeometryChangeInsteadOfTruncating) {
+    Harness harness;
+    harness.stream_ok();
+
+    // 池按 720×540 分配；这帧报 721×540，比槽位大一行像素。
+    auto info = mono8_frame_info();
+    info.width = 721U;
+    info.height = 540U;
+    info.frame_length = 721U * 540U;
+    harness.api->push_frame(make_frame(info));
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    const auto status = harness.camera->read(lease, time::Duration::from_milliseconds(60));
+
+    EXPECT_FALSE(status.ok());
+    EXPECT_FALSE(static_cast<bool>(lease));
+    EXPECT_GE(harness.camera->stats().sdk_errors, 1U);
+    EXPECT_GE(harness.camera->stats().frames_dropped, 1U);
+    EXPECT_EQ(harness.camera->stats().frames_received, 0U);
+
+    // 几何恢复一致的帧照样能读，说明拒绝没有破坏状态机。
+    harness.api->push_frame(make_frame(mono8_frame_info(2)));
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+    EXPECT_EQ(lease->width, 720U);
+    EXPECT_EQ(lease->height, 540U);
+    EXPECT_EQ(lease->size, 720U * 540U);
+}
+
 /// @brief 非 8 位格式的帧必须拒绝，不能靠调用方猜布局。
 TEST(HikvisionCamera, RejectsUnsupportedPixelFormat) {
     Harness harness;

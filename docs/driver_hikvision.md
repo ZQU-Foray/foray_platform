@@ -314,6 +314,12 @@ void CameraImpl::grab_loop() {
   - 校验 `info.pixel_format` 落在 `is_supported_pixel_format()` 内，否则计 `sdk_errors_` 并丢帧；
   - 校验 `frame_length >= stride * height`（`stride = width`，8 位单平面 MVS 帧是连续的）；
     不满足时丢帧并计 `sdk_errors_`，首帧就 mismatch 则置 `kError` 并返回 `kUnsupportedFormat`；
+  - **校验帧几何与帧池一致**（审计 H14）：池是按 `open()` 读回的 `Width`/`Height` 分配的
+    （`pool_width_`/`pool_height_`），`info.width/height` 与之不符说明设备换了几何
+    （固件 ROI 对齐修正、恢复 user set、在线改分辨率）——整帧拒绝并计 `sdk_errors_` +
+    `frames_dropped_`。不截断：只拷槽位容量却宣告新 `stride/height`，消费者按
+    `data + y*stride` 逐行读会越过槽位缓冲。几何一致后拷贝量就是
+    `pool_width_ * pool_height_`，不取 `min`；
   - `try_acquire_writer()` 拿不到槽位 → 计 `frames_dropped_`（等价于 `no_slot()`）后丢帧；
   - `std::memcpy` + 填 `ImageFrame` 元数据（§7）+ `publish()`。
 - 热路径无 new/日志/锁：`ImageFrame::frame_id` 是 `std::string_view`，驱动内部持有一份

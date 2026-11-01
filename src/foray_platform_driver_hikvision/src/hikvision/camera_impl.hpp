@@ -118,6 +118,15 @@ class CameraImpl final : public hal::Camera {
     /// @brief 保护 `pool_` 句柄本身；不保护帧池内部状态（那是无锁单写单读）。
     mutable std::mutex pool_mutex_;
 
+    /// @brief 帧池槽位按什么分辨率分配的（像素）；0 表示当前没有池。
+    ///
+    /// 只在 `open_locked()` 建池时写、`release_resources_locked()` 清空，二者都发生在
+    /// 取流线程不存在的时候；取流线程只读。`publish_frame()` 用它校验帧元数据里的
+    /// width/height——不一致说明设备换了几何，整帧必须拒绝（审计 H14）。
+    std::uint32_t pool_width_ = 0;
+
+    std::uint32_t pool_height_ = 0;
+
     std::thread grab_thread_;
 
     std::atomic<bool> stop_requested_{false};

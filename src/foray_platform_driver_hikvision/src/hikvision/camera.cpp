@@ -386,8 +386,10 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     }
 
     // 只支持 8 位 Mono/Bayer，字节数就是像素数；这一点由 apply_config 的像素格式校验保证。
+    pool_width_ = static_cast<std::uint32_t>(width.value());
+    pool_height_ = static_cast<std::uint32_t>(height.value());
     const auto frame_bytes =
-        static_cast<std::size_t>(width.value()) * static_cast<std::size_t>(height.value());
+        static_cast<std::size_t>(pool_width_) * static_cast<std::size_t>(pool_height_);
     auto slots = static_cast<std::size_t>(
         std::max<std::uint32_t>(kMinimumPoolSlots, config_.buffer_count));
     if (config_.pool_memory_limit_bytes != 0 &&
@@ -506,6 +508,8 @@ void CameraImpl::release_resources_locked() {
         handle_ = nullptr;
     }
     set_frame_pool(nullptr);
+    pool_width_ = 0;
+    pool_height_ = 0;
 }
 
 Result<void> CameraImpl::recover_locked() {
@@ -625,6 +629,15 @@ void CameraImpl::publish_frame(const FrameView& frame) {
         sdk_errors_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    // 审计 H14：帧元数据的分辨率必须与帧池槽位一致。池是按 open() 时读回的
+    // Width/Height 分配的，设备换几何（固件 ROI 对齐修正、恢复 user set、在线改
+    // 分辨率）后帧会变大或变小；截断到槽位容量却仍宣告新 stride/height 会让消费者
+    // 按 data + y*stride 逐行访问越界。整帧拒绝并计入丢帧，绝不发布半帧。
+    if (info.width != pool_width_ || info.height != pool_height_) {
+        sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+        frames_dropped_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
 
     auto writer_optional = pool_->try_acquire_writer();
     if (!writer_optional.has_value()) {
@@ -633,9 +646,9 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     }
     auto& writer = *writer_optional;
 
-    const std::size_t copy_bytes =
-        std::min<std::size_t>(static_cast<std::size_t>(info.frame_length), writer.payload_size());
-    std::memcpy(writer.data(), frame.data(), copy_bytes);
+    // 几何校验通过后池容量就是本帧的字节数，拷贝量唯一确定，不取 min。
+    const std::size_t frame_bytes = static_cast<std::size_t>(pool_width_) * pool_height_;
+    std::memcpy(writer.data(), frame.data(), frame_bytes);
 
     TimingSample sample;
     sample.device_ticks = info.device_ticks;
@@ -659,7 +672,7 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     }
 
     out.data = writer.data();
-    out.size = copy_bytes;
+    out.size = frame_bytes;
     out.width = info.width;
     out.height = info.height;
     out.stride = stride;
@@ -680,7 +693,7 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     writer.publish();
 
     frames_received_.fetch_add(1, std::memory_order_relaxed);
-    bytes_received_.fetch_add(copy_bytes, std::memory_order_relaxed);
+    bytes_received_.fetch_add(frame_bytes, std::memory_order_relaxed);
     last_sequence_.store(out.sequence, std::memory_order_relaxed);
     last_frame_stamp_ns_.store(out.stamp.nanoseconds_since_epoch(), std::memory_order_relaxed);
     last_receive_stamp_ns_.store(out.receive_stamp.nanoseconds_since_epoch(),
