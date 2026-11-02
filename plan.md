@@ -245,7 +245,44 @@
 
 ## 当前 Agent State
 
-M14_LAYOUT_REFACTOR_DONE + HOST_LINK_V02_OFFLINE_TESTED（目录规范化完成；M13 设备网络自举的实机 HIL 仍待现场授权；RoboLink 仅离线验收，未接真机）
+M14_LAYOUT_REFACTOR_DONE + HOST_LINK_V02_OFFLINE_TESTED + LOCAL_AUDIT_REMEDIATION_DONE（目录规范化完成；本地审计 28 条整改全部落地，全量 406 个用例 0 失败；M13 设备网络自举的实机 HIL 仍待现场授权；RoboLink 仅离线验收，未接真机）
+
+## 本地审计整改（2026-11-01，28 条）
+
+依据 `audit/tasks/01-foray_platform.md` 与 `audit/hal-localization-navigation-audit.md`，在
+`fix/hal-audit-remediation` 分支上一条一提交完成 28 条整改（27 笔提交），全量回归
+`colcon test-result --all` = 406 tests / 0 errors / 0 failures（整改前基线 341，未下降）。
+
+| 优先级 | 条目 | 一句话结果 |
+|---|---|---|
+| P0 | H8 | 帧池句柄加互斥快照，`read()` 不再与 `close()` 竞争同一 `shared_ptr`（TSan 改前实报、改后零报告） |
+| P0 | H9 | `frame_id` 在 `open()` 期冻结，运行期改写改为 `kNotSupported` |
+| P1 | H12 | PTP / 标定偏移 / 主机接收三条时间路径分家，无同步时置零并标 `kNoSync` |
+| P1 | H1 | HELLO 序号每次自增，ACK 按 4 个在途序号的窗口匹配 |
+| P1 | H17 | Mid-360 不再用 `frame_cnt` 切帧，只按时间窗；`frame_cnt` 仅作一致性计数 |
+| P1 | H18 | 帧基时时间加单调水线，乱序包与整段回退分开计数 |
+| P1 | H19 | 帧时长的点偏移改为整包范围校验，越界整包拒收（不改宽 32 位字段） |
+| P1 | H10 | 异常回调注册失败不再吞掉，句柄销毁先于桥表摘除 |
+| P1 | H11 | 自动曝光/增益模式下不下发手动值，`apply_tuning` 明确拒绝 |
+| P2 | H2 | CRC 失败只丢一字节重扫，不再按坏帧头吃掉后随真帧 |
+| P2 | H4 | 外部进程 stdout/stderr 用 `poll` 并发读，消除互等死锁 |
+| P2 | H5 | 控制快照改为邮箱补发，通道忙不再静默丢弃 |
+| P2 | H13 | 区分"没数据"与"链路失败"，自由运行沉默超 2 s 判故障 |
+| P2 | H14 | 帧几何与池不一致时整帧拒绝，不再截断后仍报新尺寸 |
+| P2 | H15 | `recover()` 不再清零 `sequence_` 与会话统计 |
+| P2 | H20 | SDK 双回调生产者串行化，SPSC 队列不再被两线程同时写 |
+| P2 | H22 | `recover()` / `start()` 的等待移出控制锁，卡住的调用可被打断 |
+| P2 | H23 | 用 `udp_cnt` 连续性把网络丢包变成可观测指标（`packets_lost`） |
+| P2 | H24 | 回调侧选择条件字符串改为加锁值拷贝 |
+| P2 | H25 | 内部信息 TLV 解析加边界，游标不再越过响应缓冲 |
+| P3 | H3 | HELLO 的 `heartbeat_period_ms = 0` 不再被悄悄改成 50 |
+| P3 | H6 | 打开串口后 `tcflush`，输入输出队列里的陈旧字节不再被当帧 |
+| P3 | H7 | 自动摘桥旧地址前先写 warning 留痕 |
+| P3 | H21 | Livox 包头偏移表补全 `rsvd` / `crc32`，`time_interval` 语义改正 |
+| P3 | H26 | 设备自报 length 写成契约；ROI/binning/decimation 允许显式归零；删死语句；PTP 定期重探测 |
+
+只能实机验证、本次**未验证**的三项：H23 真实丢包率、H12 PTP 同步精度、H17 真实帧率。
+详见 [decision.md](decision.md)「2026-11-01 本地审计整改的取舍」。
 
 ## Before Snapshot
 
@@ -289,7 +326,9 @@ Commit: （首次提交）
       经 pkexec 实机生效（NM profile `foray-enp0s31f6-slave` 持久）
 - [x] 常规 / ASan+UBSan / TSan 三套构建全绿（平台 151 + 驱动 36）
 - [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `foray_lidar_up`）
-- [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
+- [x] 本仓能独立 `colcon build`（在 `foray_sim:humble-fortress` 容器里 `colcon build --base-paths src` 通过，Jazzy/CI 待验）
 - [x] link 模块 21 个用例并入平台测试目标（本地 Debug 构建 192/192 通过）
 - [ ] RoboLink v0.2 与 MCU 固件逐字节对账 + 实机联调（对账前不向硬件发控制指令）
+- [x] 本地审计 28 条整改落地，全量 406 个用例 0 失败，一条一提交（决策留痕见
+      [decision.md](decision.md)「2026-11-01 本地审计整改的取舍」）
 - [ ] CI 绿灯
