@@ -49,10 +49,13 @@ class StubMvsApi final : public MvsApi {
         return Result<void>(sdk_unavailable_error());
     }
 
-    void register_exception(void* handle, ExceptionCallback callback, void* user) override {
+    Result<void> register_exception(void* handle, ExceptionCallback callback, void* user) override {
+        // stub 后端没有 SDK 可注册；`open_device()` 会先返回 kSdkUnavailable，
+        // 因此这里不制造第二个失败点。
         static_cast<void>(handle);
         static_cast<void>(callback);
         static_cast<void>(user);
+        return Result<void>();
     }
 
     Result<void> set_int(void* handle, std::string_view node_name,

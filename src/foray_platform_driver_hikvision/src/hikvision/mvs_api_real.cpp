@@ -229,11 +229,12 @@ class RealMvsApi final : public MvsApi {
         if (handle == nullptr) {
             return;
         }
-        {
-            std::lock_guard<std::mutex> lock(bridge_mutex_);
-            bridges_.erase(handle);
-        }
+        // 先销毁句柄、再释放回调桥（审计 H10）：旧顺序在 erase 与 DestroyHandle 之间
+        // 留了一个窗口，SDK 线程若此刻触发异常回调，trampoline 会解引用已释放的桥。
+        // MV_CC_DestroyHandle 返回后 SDK 不再回调，此时释放才是安全的。
         (void)MV_CC_DestroyHandle(handle);
+        std::lock_guard<std::mutex> lock(bridge_mutex_);
+        bridges_.erase(handle);
     }
 
     Result<void> open_device(void* handle) override {
@@ -253,14 +254,26 @@ class RealMvsApi final : public MvsApi {
         return Result<void>();
     }
 
-    void register_exception(void* handle, ExceptionCallback callback, void* user) override {
-        std::lock_guard<std::mutex> lock(bridge_mutex_);
-        auto bridge = std::make_unique<ExceptionBridge>();
-        bridge->callback = callback;
-        bridge->user = user;
-        ExceptionBridge* raw = bridge.get();
-        bridges_[handle] = std::move(bridge);
-        (void)MV_CC_RegisterExceptionCallBack(handle, &exception_trampoline, raw);
+    Result<void> register_exception(void* handle, ExceptionCallback callback, void* user) override {
+        ExceptionBridge* raw = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(bridge_mutex_);
+            auto bridge = std::make_unique<ExceptionBridge>();
+            bridge->callback = callback;
+            bridge->user = user;
+            raw = bridge.get();
+            bridges_[handle] = std::move(bridge);
+        }
+
+        const int ret = MV_CC_RegisterExceptionCallBack(handle, &exception_trampoline, raw);
+        if (ret != MV_OK) {
+            // 注册失败必须上报：没有异常回调，掉线永远不会触发 recover()。
+            // 同时撤回已经挂进表的桥，避免留下"看起来注册过"的空壳。
+            std::lock_guard<std::mutex> lock(bridge_mutex_);
+            bridges_.erase(handle);
+            return mvs_failure("MV_CC_RegisterExceptionCallBack", static_cast<std::uint32_t>(ret));
+        }
+        return Result<void>();
     }
 
     Result<void> set_int(void* handle, std::string_view node, std::int64_t value) override {

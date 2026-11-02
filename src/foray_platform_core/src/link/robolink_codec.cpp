@@ -350,9 +350,16 @@ std::vector<std::uint8_t> encode_hello_payload(const Hello& message)
 
 std::optional<Hello> decode_hello_payload(const std::uint8_t* data, std::size_t size)
 {
-    if (size != kHelloSize || data == nullptr || data[2] > 1 ||
-        read_u16(data + 20) < 96 ||
-        read_u16(data + 20) > 512) {
+    if (size != kHelloSize || data == nullptr) {
+        return std::nullopt;
+    }
+    const std::uint16_t heartbeat_period_ms = read_u16(data + 18);
+    const std::uint16_t max_frame_bytes = read_u16(data + 20);
+    // 主版本不符、设备类型未知、周期为 0、帧上限越界一律整包拒收（审计 H3）。
+    // 这里不做「周期为 0 就当作 50 ms」这类改写：静默补齐会让两端对心跳间隔的
+    // 理解不一致，失联判定窗口随之错位。
+    if (data[0] != 2 || data[2] > 1 || heartbeat_period_ms == 0 || max_frame_bytes < 96 ||
+        max_frame_bytes > 512) {
         return std::nullopt;
     }
     Hello out;
@@ -362,8 +369,8 @@ std::optional<Hello> decode_hello_payload(const std::uint8_t* data, std::size_t 
     std::copy(data + 3, data + 6, out.fw_version.begin());
     out.git_short = read_u32(data + 6);
     out.capabilities = read_u64(data + 10);
-    out.heartbeat_period_ms = read_u16(data + 18) == 0 ? 50 : read_u16(data + 18);
-    out.max_frame_bytes = read_u16(data + 20);
+    out.heartbeat_period_ms = heartbeat_period_ms;
+    out.max_frame_bytes = max_frame_bytes;
     out.device_id_digest = read_u32(data + 22);
     return out;
 }

@@ -18,11 +18,12 @@ enum class PacketKind {
     kPointCloud,
 };
 
-/// @brief 固定 36 字节头部；字段偏移见 Livox 通信协议。
+/// @brief 固定 36 字节头部；字段偏移见 Livox 通信协议（12–23 为 rsvd、24–27 为 crc32，
+/// 本仓既不读也不校验后者——校验由 Livox SDK2 在回调前完成，见 `docs/driver_livox.md` §4）。
 struct PacketHeader {
     std::uint8_t version = 0;
     std::uint16_t length = 0;
-    /// @brief 包内点间隔，单位 0.1 µs。
+    /// @brief 整包时间跨度，单位 0.1 µs；点间隔 = `time_interval × 100 / dot_num` ns。
     std::uint16_t time_interval = 0;
     std::uint16_t dot_num = 0;
     std::uint16_t udp_cnt = 0;
@@ -69,6 +70,16 @@ std::uint8_t default_line_num(std::uint8_t dev_type) noexcept;
 
 /// @brief 机型名称，用于 `SensorInfo::model`。
 const char* model_name(std::uint8_t dev_type) noexcept;
+
+/**
+ * @brief 该机型能否用 `frame_cnt` 切帧。
+ *
+ * Mid-360 / Mid-360s 是非重复扫描，`frame_cnt` 在固件里不承担帧边界语义（既不单调
+ * 递增也不保证回零，`udp_cnt` 同样可能不回零），只能用时间窗切帧；其余机型是重复
+ * 扫描，`frame_cnt` 变化与 `udp_cnt` 回零都是可靠的帧边界。见 `docs/driver_livox.md`
+ * §5「组帧」。
+ */
+bool frame_cnt_represents_frame(std::uint8_t dev_type) noexcept;
 
 /**
  * @brief IPv4 点分字符串 → Livox handle。

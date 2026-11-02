@@ -29,6 +29,18 @@ constexpr std::uint32_t kGrabTimeoutMs = 100;
 /// 才认为需要 `recover()`。
 constexpr std::uint32_t kMaxConsecutiveErrors = 5;
 
+/// @brief 自由运行时「一直没数据」持续多久判定取流停摆（审计 H13）。
+///
+/// 用时间而不是迭代次数：真实 SDK 的等待窗口是 `kGrabTimeoutMs`，但测试里的
+/// mock 只 sleep 1 ms，按次数判会让同一份代码在两种环境下阈值相差 100 倍。
+/// 2 s 比文档 §5 声明支持的最低帧率（1 Hz，周期 1 s）留了一倍余量：慢速相机不会被
+/// 误判，真正停掉的流也能在上层超时抱怨之前进入 `kError` 交给 `recover()`。
+constexpr std::int64_t kStarvationWindowNs = 2'000'000'000;
+
+/// PTP 状态重探测间隔：`GevIEEE1588Status` 从 Master/FreeRun 收敛到 Slave 通常要几秒，
+/// 每秒一次远快于收敛速度，又不会给控制通道加压（审计 H26 附带项③）。
+constexpr std::int64_t kPtpProbeIntervalNs = 1'000'000'000;
+
 /// @brief `read()` 的轮询间隔，与 Livox 驱动保持一致。
 constexpr std::uint32_t kPollMicroseconds = 200;
 
@@ -214,6 +226,8 @@ hal::DeviceState CameraImpl::state() const noexcept {
 }
 
 hal::SensorInfo CameraImpl::info() const {
+    // 审计 H9：`info_` 会被任何线程读，写侧在 open() 里，因此必须加锁拷贝。
+    std::lock_guard<std::mutex> lock(info_mutex_);
     return info_;
 }
 
@@ -241,6 +255,11 @@ hal::SensorStats CameraImpl::stats() const noexcept {
 
 Result<void> CameraImpl::open() {
     std::lock_guard<std::mutex> lock(control_mutex_);
+    // 审计 H15：会话级计数器与 `sequence_` 只在这里（用户主动 open）清零。
+    // `recover()` 复用的是 `open_locked()`，它不能再清——否则一次自动恢复之后
+    // 消费者看到 sequence 从 1000 掉回 1（断帧/乱序判定失效），统计也从"掉线过、
+    // 恢复了"变成"一次都没掉线"。
+    reset_session_counters_locked();
     return open_locked();
 }
 
@@ -292,7 +311,12 @@ Result<void> CameraImpl::open_locked() {
         return fail(handle.error());
     }
     handle_ = handle.value();
-    api_->register_exception(handle_, &CameraImpl::on_exception, this);
+    // 注册异常回调失败必须让 open() 失败：没有回调就没有掉线自愈，
+    // 现场只会表现为"相机在用、recover() 永不触发"。
+    if (auto registered = api_->register_exception(handle_, &CameraImpl::on_exception, this);
+        !registered.ok()) {
+        return fail(registered.error());
+    }
 
     if (auto status = api_->open_device(handle_); !status.ok()) {
         return fail(status.error());
@@ -303,27 +327,36 @@ Result<void> CameraImpl::open_locked() {
     }
 
     {
-        std::lock_guard<std::mutex> lock(tuning_mutex_);
-        info_ = build_info(selected.value());
-        info_.frame_id = frame_id_;
+        auto built = build_info(selected.value());
+        built.frame_id = frame_id_;
+        std::lock_guard<std::mutex> lock(info_mutex_);
+        info_ = std::move(built);
     }
 
+    // 审计 H15：这里只清「本次打开」相关的瞬时状态。会话级计数器与 `sequence_`
+    // 归 `reset_session_counters_locked()`（只在用户 open() 时调），因为 recover()
+    // 也走这条路径，清掉会让一次自动恢复看起来像换了个新相机。
+    consecutive_errors_.store(0, std::memory_order_relaxed);
+
+    state_.store(hal::DeviceState::kOpen, std::memory_order_release);
+    return Result<void>();
+}
+
+void CameraImpl::reset_session_counters_locked() {
+    // 只在 open() 调用；见头文件对会话级计数器的说明（审计 H15）。
     frames_received_.store(0, std::memory_order_relaxed);
     frames_delivered_.store(0, std::memory_order_relaxed);
     frames_dropped_.store(0, std::memory_order_relaxed);
     bytes_received_.store(0, std::memory_order_relaxed);
     timeouts_.store(0, std::memory_order_relaxed);
     sdk_errors_.store(0, std::memory_order_relaxed);
-    consecutive_errors_.store(0, std::memory_order_relaxed);
+    reconnects_.store(0, std::memory_order_relaxed);
     last_sequence_.store(0, std::memory_order_relaxed);
     last_vendor_code_.store(0, std::memory_order_relaxed);
     last_frame_stamp_ns_.store(0, std::memory_order_relaxed);
     last_receive_stamp_ns_.store(0, std::memory_order_relaxed);
     sequence_ = 0;
     last_device_frame_number_ = 0;
-
-    state_.store(hal::DeviceState::kOpen, std::memory_order_release);
-    return Result<void>();
 }
 
 Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
@@ -370,8 +403,10 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     }
 
     // 只支持 8 位 Mono/Bayer，字节数就是像素数；这一点由 apply_config 的像素格式校验保证。
+    pool_width_ = static_cast<std::uint32_t>(width.value());
+    pool_height_ = static_cast<std::uint32_t>(height.value());
     const auto frame_bytes =
-        static_cast<std::size_t>(width.value()) * static_cast<std::size_t>(height.value());
+        static_cast<std::size_t>(pool_width_) * static_cast<std::size_t>(pool_height_);
     auto slots = static_cast<std::size_t>(
         std::max<std::uint32_t>(kMinimumPoolSlots, config_.buffer_count));
     if (config_.pool_memory_limit_bytes != 0 &&
@@ -386,9 +421,10 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     }
 
     try {
-        pool_ = std::make_shared<hal::FramePool<hal::ImageFrame>>(slots, frame_bytes);
-        // 先创建空池再填入像素格式等“每帧固定”字段，取流时只改序号与时间。
-        pool_->payload_size();
+        // 池只负责提供 `slots × frame_bytes` 的缓冲；每帧的像素格式、尺寸、frame_id
+        // 等字段由 `publish_frame()` 逐帧填写——frame_id 自 H9 起在 open() 期冻结，
+        // 不能在池里预先钉死后又被改写。
+        set_frame_pool(std::make_shared<hal::FramePool<hal::ImageFrame>>(slots, frame_bytes));
     } catch (const std::bad_alloc&) {
         return Result<void>(make_error(
             ErrorCode::kInternal, "帧池内存分配失败：需要 " + std::to_string(slots) + " × " +
@@ -430,6 +466,12 @@ Result<void> CameraImpl::start_locked() {
 
     stop_requested_.store(false, std::memory_order_release);
     consecutive_errors_.store(0, std::memory_order_relaxed);
+    starve_since_ns_ = 0;
+    last_ptp_probe_ns_ = 0;
+    // 触发方式属于 static 级配置（运行期不热改），在这里一次性告诉取流线程：
+    // 触发模式下的「没数据」是正常状态，不能判成停摆（审计 H13）。
+    wait_for_trigger_.store(config_.trigger.mode != hal::TriggerMode::kOff,
+                            std::memory_order_release);
     try {
         grab_thread_ = std::thread([this] { grab_loop(); });
     } catch (const std::system_error& error) {
@@ -484,7 +526,9 @@ void CameraImpl::release_resources_locked() {
         api_->destroy_handle(handle_);
         handle_ = nullptr;
     }
-    pool_.reset();
+    set_frame_pool(nullptr);
+    pool_width_ = 0;
+    pool_height_ = 0;
 }
 
 Result<void> CameraImpl::recover_locked() {
@@ -544,14 +588,35 @@ void CameraImpl::grab_loop() {
         if (!frame.ok()) {
             const Error& error = frame.error();
             last_vendor_code_.store(error.vendor_code, std::memory_order_relaxed);
-            if (error.code == ErrorCode::kTimeout || error.code == ErrorCode::kNoData) {
-                // 超时是正常控制流：继续等下一帧，不 sleep（SDK 内部已经阻塞过）。
+            // 「没数据」有两个来源：MV_E_NODATA（SDK 明说这次等待里没收到数据）与
+            // 不带厂商码的 kTimeout（抽象层自己的超时）。两者都属于正常等待，不能
+            // 算失败；带厂商码的 kTimeout 是 MV_E_GC_TIMEOUT 之类的真实故障——抓流
+            // 时出现说明控制通道或链路已经不对，必须计入失败（审计 H13）。
+            const bool silent = error.code == ErrorCode::kNoData ||
+                                (error.code == ErrorCode::kTimeout && error.vendor_code == 0);
+            if (silent) {
                 timeouts_.fetch_add(1, std::memory_order_relaxed);
+                if (wait_for_trigger_.load(std::memory_order_relaxed)) {
+                    // 触发模式下等触发可以无限长，不判停摆。
+                    starve_since_ns_ = 0;
+                    continue;
+                }
+                // 自由运行时相机应当持续出图：沉默超过 `kStarvationWindowNs` 说明流
+                // 已经停了（掉线、相机被关、网线松），置 kError 交给上层 recover()。
+                const std::int64_t now_ns = time::SteadyClock().now().nanoseconds_since_epoch();
+                if (starve_since_ns_ == 0) {
+                    starve_since_ns_ = now_ns;
+                    continue;
+                }
+                if (now_ns - starve_since_ns_ >= kStarvationWindowNs) {
+                    sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+                    state_.store(hal::DeviceState::kError, std::memory_order_release);
+                    return;
+                }
                 continue;
             }
             sdk_errors_.fetch_add(1, std::memory_order_relaxed);
-            const auto streak =
-                consecutive_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
+            const auto streak = consecutive_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
             if (streak >= kMaxConsecutiveErrors) {
                 // 连续失败意味着链路已坏；交给上层 recover()，线程自行退出。
                 state_.store(hal::DeviceState::kError, std::memory_order_release);
@@ -560,11 +625,46 @@ void CameraImpl::grab_loop() {
             continue;
         }
         consecutive_errors_.store(0, std::memory_order_relaxed);
+        starve_since_ns_ = 0;
 
+        refresh_ptp_if_needed();
         publish_frame(*frame.value());
 
         // 同一线程归还：MV_CC_FreeImageBuffer 必须与 MV_CC_GetImageBuffer 配对。
         api_->free_frame(handle_, std::move(frame.value()));
+    }
+}
+
+void CameraImpl::refresh_ptp_if_needed() {
+    {
+        std::lock_guard<std::mutex> lock(tuning_mutex_);
+        if (timestamp_config_.ptp_slave && timestamp_config_.tick_frequency_hz != 0) {
+            // 已经拿到 PTP 基准，不再打扰控制通道。
+            return;
+        }
+    }
+    const std::int64_t now_ns = time::SteadyClock().now().nanoseconds_since_epoch();
+    if (last_ptp_probe_ns_ != 0 && now_ns - last_ptp_probe_ns_ < kPtpProbeIntervalNs) {
+        return;
+    }
+    last_ptp_probe_ns_ = now_ns;
+
+    // 查询在锁外：`get_enum`/`get_int` 走 SDK 控制通道，可能阻塞。
+    const bool ptp_slave = query_ptp_slave(*api_, handle_);
+    const std::uint32_t tick_frequency = query_tick_frequency(*api_, handle_);
+    if (!ptp_slave && tick_frequency == 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(tuning_mutex_);
+    if ((ptp_slave && !timestamp_config_.ptp_slave) ||
+        (tick_frequency != 0 && timestamp_config_.tick_frequency_hz == 0)) {
+        // 只更新这两个字段：其余（偏移、延迟、兜底开关）是 static 级配置，
+        // 不能因为一次探测就把它们重置掉。
+        timestamp_config_.ptp_slave = ptp_slave;
+        if (tick_frequency != 0) {
+            timestamp_config_.tick_frequency_hz = tick_frequency;
+        }
     }
 }
 
@@ -582,6 +682,15 @@ void CameraImpl::publish_frame(const FrameView& frame) {
         sdk_errors_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    // 审计 H14：帧元数据的分辨率必须与帧池槽位一致。池是按 open() 时读回的
+    // Width/Height 分配的，设备换几何（固件 ROI 对齐修正、恢复 user set、在线改
+    // 分辨率）后帧会变大或变小；截断到槽位容量却仍宣告新 stride/height 会让消费者
+    // 按 data + y*stride 逐行访问越界。整帧拒绝并计入丢帧，绝不发布半帧。
+    if (info.width != pool_width_ || info.height != pool_height_) {
+        sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+        frames_dropped_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
 
     auto writer_optional = pool_->try_acquire_writer();
     if (!writer_optional.has_value()) {
@@ -590,9 +699,9 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     }
     auto& writer = *writer_optional;
 
-    const std::size_t copy_bytes =
-        std::min<std::size_t>(static_cast<std::size_t>(info.frame_length), writer.payload_size());
-    std::memcpy(writer.data(), frame.data(), copy_bytes);
+    // 几何校验通过后池容量就是本帧的字节数，拷贝量唯一确定，不取 min。
+    const std::size_t frame_bytes = static_cast<std::size_t>(pool_width_) * pool_height_;
+    std::memcpy(writer.data(), frame.data(), frame_bytes);
 
     TimingSample sample;
     sample.device_ticks = info.device_ticks;
@@ -608,14 +717,15 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     {
         std::lock_guard<std::mutex> lock(tuning_mutex_);
         timing = compute_timing(sample, timestamp_config_);
-        // frame_id_ 由同一把锁保护：string_view 必须在锁内取，否则会和 apply() 竞争。
+        // 审计 H9：frame_id_ 打开后不再改写（apply() 拒收该字段），这条视图
+        // 因此在整个租约期间都指向活着的存储。
         out.frame_id = frame_id_;
         exposure_hint = exposure_hint_us_;
         gain_hint = gain_hint_db_;
     }
 
     out.data = writer.data();
-    out.size = copy_bytes;
+    out.size = frame_bytes;
     out.width = info.width;
     out.height = info.height;
     out.stride = stride;
@@ -636,7 +746,7 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     writer.publish();
 
     frames_received_.fetch_add(1, std::memory_order_relaxed);
-    bytes_received_.fetch_add(copy_bytes, std::memory_order_relaxed);
+    bytes_received_.fetch_add(frame_bytes, std::memory_order_relaxed);
     last_sequence_.store(out.sequence, std::memory_order_relaxed);
     last_frame_stamp_ns_.store(out.stamp.nanoseconds_since_epoch(), std::memory_order_relaxed);
     last_receive_stamp_ns_.store(out.receive_stamp.nanoseconds_since_epoch(),
@@ -646,9 +756,22 @@ void CameraImpl::publish_frame(const FrameView& frame) {
     last_device_frame_number_ = info.frame_number;
 }
 
+std::shared_ptr<hal::FramePool<hal::ImageFrame>> CameraImpl::frame_pool_snapshot() const {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    return pool_;
+}
+
+void CameraImpl::set_frame_pool(std::shared_ptr<hal::FramePool<hal::ImageFrame>> pool) {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    pool_ = std::move(pool);
+}
+
 Result<void> CameraImpl::read(hal::FrameLease<hal::ImageFrame>& out, time::Duration timeout) {
     const auto current = state_.load(std::memory_order_acquire);
-    if (current != hal::DeviceState::kStreaming || pool_ == nullptr) {
+    // 先把池句柄拷到本地（审计 H8）：`close()`/`recover()` 释放的是成员句柄，本次
+    // 调用与它已经取到的租约由本地 `shared_ptr` 保活，不再和释放动作竞争。
+    const auto pool = frame_pool_snapshot();
+    if (current != hal::DeviceState::kStreaming || pool == nullptr) {
         return Result<void>(make_error(
             ErrorCode::kNotOpen,
             "read() 需要相机处于 streaming 状态，当前: " + std::string(hal::to_string(current))));
@@ -659,7 +782,7 @@ Result<void> CameraImpl::read(hal::FrameLease<hal::ImageFrame>& out, time::Durat
     const std::int64_t deadline_ns = clock.now().nanoseconds_since_epoch() + budget_ns;
 
     for (;;) {
-        auto lease = pool_->try_acquire_latest();
+        auto lease = pool->try_acquire_latest();
         if (lease) {
             frames_delivered_.fetch_add(1, std::memory_order_relaxed);
             out = std::move(lease);
@@ -711,6 +834,15 @@ Result<void> CameraImpl::apply(const hal::CameraTuning& tuning) {
     if (tuning.empty()) {
         return Result<void>();
     }
+    // 审计 H9：`frame_id` 是打开期固定字段——已交付租约里的 `ImageFrame::frame_id`
+    // 指向 `frame_id_` 的存储，热改会让在手的租约变成悬垂视图。这里**整包拒绝**，
+    // 而不是悄悄忽略该字段后再应用其余字段（后者会让调用方以为 frame_id 生效了）。
+    if (tuning.frame_id.has_value()) {
+        return Result<void>(
+            make_error(ErrorCode::kNotSupported,
+                       "apply() 不支持热改 frame_id：已交付租约的 frame_id 视图指向驱动内部存储，"
+                       "该字段只能在 open() 前通过配置修改"));
+    }
     if (handle_ == nullptr) {
         return Result<void>(make_error(ErrorCode::kInternal, "相机句柄已释放，无法调参"));
     }
@@ -742,11 +874,6 @@ Result<void> CameraImpl::apply(const hal::CameraTuning& tuning) {
         if (tuning.allow_unsynced_stamp.has_value()) {
             timestamp_config_.allow_unsynced_stamp = *tuning.allow_unsynced_stamp;
             config_.allow_unsynced_stamp = *tuning.allow_unsynced_stamp;
-        }
-        if (tuning.frame_id.has_value()) {
-            frame_id_ = *tuning.frame_id;
-            config_.frame_id = *tuning.frame_id;
-            info_.frame_id = *tuning.frame_id;
         }
         // 这些字段 recover() 之后要沿用，所以同步回 config_。
         if (tuning.exposure_us.has_value()) {

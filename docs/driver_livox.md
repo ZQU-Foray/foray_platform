@@ -49,10 +49,51 @@ SDK 回调线程
   └─ open/start/stop/close/recover；commands 不在回调里执行
 ```
 
-- 回调路径不加锁、不分配、不打日志；队列满时计数并丢包；
+- 回调路径不分配、不打日志、不拿互斥量（只一次 `atomic_flag` 串行化，见 §2.1）；
+  队列满时计数并丢包；
 - 原始包环默认 4096 槽 × 1500 B（约 6 MB/雷达）；
 - 解析线程轮询间隔 200 µs，10 Hz 点云下额外延迟可忽略；
 - `FramePool` 采用最新帧邮箱，消费者慢时丢旧帧并累计 `dropped`。
+
+### 2.1 SDK 回调是否同线程：不能假设
+
+点云与 IMU 是**两条独立的 SDK 回调注册**（`set_point_cloud_callback` /
+`set_imu_callback`），两者都进同一个 `CallbackSink::push()`，也就是同一个
+`SpscQueue<PacketSlot>`；而 `SpscQueue` 只允许**一个**生产者。
+
+- SDK2 的公开接口没有承诺这两条回调在同一个线程上触发。官方
+  `livox_ros_driver2` 恰好把它们放在同一个回调线程里（`pub_handler.cpp` 的
+  `PollCallback`），但那是它的实现细节，不是 API 契约；
+- 若 SDK 真的用两个线程回调，两个线程同时写队列头就会丢包甚至读到错槽位
+  （TSan 会直接报 `spsc_queue.hpp` 里 `head_` 的 data race，审计 H20 复现过）；
+- 因此 `push()` 在入队前用一次 `atomic_flag` 把生产者串起来
+  （`CallbackSink::producer_lock_`）。无竞争时成本是一条 `test_and_set`，
+  与每包约 1.4 KB 的 `memcpy` 相比可忽略；真有竞争时让出 CPU 并累加
+  `producer_contended`。
+
+**怎么验证**：`CallbackSink::producer_contended` 是内部计数器（`livox_runtime.hpp`，
+不进公开的 `hal::SensorStats`——不为一条防护指标扩 HAL 契约）。实机确认 SDK 回调线程
+数量时，在 `push()` 里临时打印 `std::this_thread::get_id()`，或在这条计数非 0 时打日志；
+看到两个不同线程 id 且计数增长，就说明当前 SDK 版本是多线程回调，这条串行化是必需的。
+反过来，计数一直为 0 只说明没撞上并发，不能证明 SDK 单线程。
+
+也正因为生产者之间没有顺序保证，解析线程不得依赖点云包与 IMU 包在队列里的相对次序，
+只能按各自包内时间戳归并（见 §6）。
+
+### 2.2 选择条件字符串的跨线程访问
+
+`sink->serial` / `sink->ip_address`（选择条件）原来就是两条裸 `std::string`，而它们的
+写入方有三个：注册时按配置写（控制线程）、`InfoChange` 回调为空时补写（SDK 线程）、
+`on_info()` 的 handle 兜底匹配（SDK 线程读）；读取方还有 `update_sensor_info_locked()`
+（控制线程）与 `info()` 的调用线程。没有同步的 `std::string` 读写是在内部指针上赛跑，
+release 构建下可能读到半截字符串（审计 H24，TSan 复现过
+`CallbackSink::serial_copy` 的 data race）。
+
+- 现在统一走 `CallbackSink` 内部的一把 `selector_mutex_` + **值拷贝**：
+  `set_selector()` / `fill_selector_if_empty()` / `selector_matches()` /
+  `serial_copy()` / `ip_address_copy()`；字符串本身是 private，外部改不了也不会误用；
+- 这些字段只在下线或 `InfoChange` 时写，不在每包热路径上，互斥量的代价可忽略；
+- 读到的永远是**完整**字符串：要么旧值、要么新值，不会是"写了一半"。
 
 ## 3. SDK 运行时与多雷达
 
@@ -77,15 +118,37 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 |---|---|---|
 | 0 | version | 协议版本 |
 | 1 | length | 头 + 载荷总长（小端 u16） |
-| 3 | time_interval | 点间隔，单位 0.1 µs |
+| 3 | time_interval | **整包时间跨度**，单位 0.1 µs（点间隔 = `time_interval × 100 / dot_num` ns，见下） |
 | 5 | dot_num | 包内点数 |
 | 7 | udp_cnt | 帧内包序号，0 为首包 |
 | 9 | frame_cnt | 帧号（u8，回绕） |
 | 10 | data_type | 0x00 IMU / 0x01 高精度 / 0x02 低精度 / 0x03 球坐标 / 0x11 双回波 |
 | 11 | time_type | 0 NoSync / 1 PTP / 2 GPS / 3、4 PPS |
+| 12 | rsvd | 保留，12 字节（12–23），接收端忽略 |
+| 24 | crc32 | 小端 u32（24–27）；**本仓不校验**——校验在 Livox SDK2 内部完成，回调拿到的包已被拦过一层（审计 H21） |
 | 28 | timestamp | 首点时间（ns） |
 
-点转换：
+> 偏移表覆盖 0–35 全部字节：本仓只读取上面标注了字段名的偏移（`packet_parser.cpp:29-37` 的
+> `kOffset*` 常量），`rsvd` 与 `crc32` 既不读也不校验；照这张表二次开发时不要以为它们是
+> 载荷的一部分。
+
+### 4.1 设备自报 `length` 的可信边界（审计 H26）
+
+`PacketView::size` 直接取自 SDK 结构体的 `length` 字段，是**设备自报**的「头 + 载荷」总长，
+不是本仓算出来的缓冲区大小。把它当源缓冲长度用是一条**显式契约**：
+
+- 前提：SDK 保证「回调期间 `data` 指向完整包」。这条保证不在本仓可验证范围内
+  （`FORAY_BUILD_DRIVER_LIVOX=OFF` 时连 SDK 结构体布局都编译不进来），所以它是一句
+  外部依赖声明，而不是本仓的实测结论；
+- 因此消费方必须各自再设上界，不许直接拿 `size` 做 `memcpy` 长度或数组下标。当前三道：
+  1. `CallbackSink::push()`：拒绝 `size < 36` 或 `size > max_packet_bytes`（默认 1500，
+     上限 `kMaxPacketBytes`），只有通过者才 `memcpy` 进定长 `PacketSlot::data`；
+  2. `parse_header()`：要求 `length >= 36` 且 `length <= size`；
+  3. `parse_points()`：要求 `dot_num × stride <= length - 36`。
+- 回归保护：`CallbackSinkTest.RejectsSizeOutsideHeaderAndCapacity` 钉住第 1 道闸门
+  （含「正好等于容量上限必须收下」这条边界）。
+
+### 4.2 点转换
 
 - 高精度 `int32 mm` → m；低精度 `int16 cm` → m；
 - 球坐标：`depth` mm、`theta/phi` 0.01°；`x = d·cosθ·cosφ`，`y = d·sinθ·cosφ`，`z = d·sinφ`；
@@ -95,22 +158,32 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 
 ## 5. 组帧
 
-帧边界（任一条件）：
+帧边界（按机型分派，见 `frame_cnt_represents_frame()`）：
 
-- `frame_cnt` 变化（重复扫描的有效帧号）；
-- `udp_cnt == 0` 且当前帧非空（有意义的帧起始）；
-- 距当前帧首包达到 `frame_duration_ms`（默认 100 ms）。
+- 重复扫描机型（HAP / Mid-40 / Tele-15 等）：
+  `frame_cnt` 变化、`udp_cnt == 0` 且当前帧非空、距当前帧首包达到 `frame_duration_ms`，
+  任一条件成立即切帧；
+- Mid-360 / Mid-360s（非重复扫描）：**只**按 `frame_duration_ms` 切帧；`frame_cnt` 变化只计入
+  `frame_cnt_discontinuities()` 作一致性观测，不切帧。
 
 > **Mid-360 非重复扫描下 `frame_cnt` 无效**，`udp_cnt` 也可能不回零；
-> 必须依赖时间窗口切帧，否则会一直累积、永远不发布。
+> 必须依赖时间窗口切帧，否则一帧会被切成几十个碎帧，下游帧率与点数全错。
 
 其他约定：
 
 - 首包的 `timestamp` 作为 `base_time` / `device_base_time_ns`；
+- **按 `udp_cnt` 连续性统计丢包（审计 H23）**：重复扫描机型在同一 `frame_cnt` 内
+  `udp_cnt` 逐包 +1，缺口就是没到的包，累加进 `FrameAssembler::udp_cnt_gaps()` 并
+  通过 `hal::SensorStats::packets_lost` 暴露；差值按模 65536 求，超过半圈（32768）的
+  视为乱序/计数重置，只计入 `udp_cnt_anomalies()` 不算丢包；帧首包若丢失无法归因
+  （没有前序包可比），因此长跑口径会少算每帧第一个包。Mid-360 系列的 `udp_cnt`
+  不承担帧内序号语义，**不**据此统计丢包；
 - 点缓冲满时丢弃当前帧剩余包，`points_dropped` 累计；
 - 无空闲帧槽时丢帧并 `dropped_frames++`，不阻塞解析线程；
 - 超过 `frame_timeout_ms` 无新包时发布当前帧（防止最后一帧滞留）；
 - `stop()/close()` 时 `flush()` 当前帧；
+- `packets_lost`（上游丢包）与 `packets_dropped`（本组件丢包）是两个独立指标，
+  长跑告警阈值建议按丢包率 `packets_lost / (packets_received + packets_lost)` 算；
 - 输出传感器安装系，外参不在此处应用。
 
 ## 6. 时间语义
@@ -163,13 +236,31 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 ```
 
 - `open()`：校验配置 → 初始化 SDK → 建立队列/帧池 → 注册 sink；
-- `start()`：等待 `InfoChange`（最长 5 s）→ 下发工作模式/点类型/扫描模式
+- `start()`：**不持控制锁**等待 `InfoChange`（最长 5 s）→ 下发工作模式/点类型/扫描模式
   （5 次重试，间隔 100 ms）→ 启动解析线程；
 - `stop()`：置 sink 非活跃、停止并 join 解析线程、flush 当前帧；
 - `close()`：幂等；释放队列/帧池，注销 sink，最后一个实例触发 SDK Uninit；
-- `recover()`：stop → 释放 → 按 100/200/400/800/1600 ms 退避重新 open/start；
+- `recover()`：stop → 请求复位 → 释放 → 按 100/200/400/800/1600 ms 退避重新 open/start；
   成功后 `reconnects++`；
 - 掉线期间已发出的 `FrameLease` 仍有效（帧池由 `shared_ptr` 保活）。
+
+### 8.1 控制调用的阻塞边界（审计 H22）
+
+`control_mutex_` 只保护状态机与资源指针，**不覆盖等待**：
+
+- `start()` 的设备上线等待、`recover()` 的退避 sleep 都在锁外，因此掉线恢复期间
+  `stop()` / `close()` / `info()` 仍然秒回，不会被 3.1 s 退避（改前最坏约 28 s，
+  含每次尝试里最长 5 s 的 `wait_for_info`）一起钉住；
+- `start()` 等设备上线超时时**不把状态踩成 `kError`**，保持 `kOpen`：设备晚一点
+  上线可以直接重试 `start()`，不必为了重试先走一遍 `recover()`；
+- 两条控制路径之间用"控制代次"（`control_generation_`）判定是否被打断：每次公共
+  控制调用自增一次；`recover()` 在锁外醒来发现代次变了，就立刻放手返回
+  `kNotOpen`，**不会**在用户已经 `close()` 之后把设备重新打开；
+- 失效的 `sink_` 同样会被拦下：`start()` / `recover()` 收尾时比对
+  `std::atomic_load(&sink_)` 是否仍等于等待前那份快照，不等就放弃本次启动。
+
+因此 `recover()` 的调用方协议变成：**它可以阻塞数秒（退避），但不会阻塞其他控制调用**；
+需要取消就调用 `close()`。
 
 ## 9. 错误映射
 
@@ -215,6 +306,8 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 - 双回波 `0x11` 未实现，需要确认固件/SDK 版本与结构；
 - `host_ip` 变化需要重新创建运行时（进程内只初始化一次）；
 - 未做数据包 CRC 校验（SDK 已校验）；
+- `packets_lost` 只在重复扫描机型上有效；Mid-360 系列没有可用的帧内包序号，
+  该字段恒为 0，**0 只代表"测不出来"，不代表没丢包**；
 - 多雷达共用一份 host JSON；如需不同主机 IP/端口，需扩展运行时配置；
 - Mid-360s 的 SDK JSON 键是大小写敏感的 `"Mid360s"`，自定义 JSON 必须包含；
 - 默认单播；组播需要自定义 JSON 中的 `multicast_ip` 并确保网桥转发。

@@ -33,6 +33,7 @@ set(FORAY_LIVOX_CORE_SOURCES
     src/livox/frame_assembler.cpp
     src/livox/config_json.cpp
     src/livox/livox_control.cpp
+    src/livox/tlv_scan.cpp
 )
 
 set(FORAY_LIVOX_BACKEND_SOURCES
@@ -151,6 +152,8 @@ if(FORAY_PLATFORM_BUILD_TESTS)
         test/livox/frame_assembler_test.cpp
         test/livox/lidar_test.cpp
         test/livox/livox_control_test.cpp
+        test/livox/callback_sink_test.cpp
+        test/livox/tlv_scan_test.cpp
     )
     target_include_directories(foray_platform_driver_livox_tests
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

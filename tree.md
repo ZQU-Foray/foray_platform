@@ -62,7 +62,7 @@
 │   │   │   ├── result/          错误码 / Result 单测
 │   │   │   ├── container/       SPSC 队列单测
 │   │   │   ├── config/          分层 / include / env / 导出单测
-│   │   │   ├── net/             MTU / 计划 / 回滚 / 跨桥 / bootstrap 单测
+│   │   │   ├── net/             MTU / 计划 / 回滚 / 跨桥 / bootstrap / 外部进程单测
 │   │   │   ├── link/            设备生命周期 · CRC · 组帧 · 解析 · 编解码 · 链路单测
 │   │   │   └── hal/             类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
 │   │   ├── apps/foray_net_helper.cpp  特权网络自举 helper（pkexec）
@@ -85,12 +85,13 @@
 │   │   │   ├── livox_api_stub.cpp   SDK OFF 时的 stub
 │   │   │   ├── packet_parser.cpp/.hpp  36 字节头与点/IMU 解析
 │   │   │   ├── frame_assembler.cpp/.hpp  组帧与逐点时间
+│   │   │   ├── tlv_scan.cpp/.hpp  内部信息 TLV 有界扫描（游标不越过响应缓冲）
 │   │   │   └── config_json.cpp/.hpp  Livox 网络 JSON
 │   │   ├── apps/
 │   │   │   ├── livox_dump.cpp   点云导出（PCD/PPM/流式 stdout）与自检
 │   │   │   ├── livox_config.cpp 雷达参数读回/下发/再校验
 │   │   │   └── lidar_up.cpp     一键自举：网络 + 配置 + 取帧健康确认
-│   │   └── test/livox/          mock 单测 + backend 能力测试
+│   │   └── test/livox/          mock 单测 + backend 能力测试（含回调生产者、TLV 扫描）
 │   └── foray_platform_driver_hikvision/  海康 MVS 驱动（纯 CMake，不依赖 ROS）
 │       ├── CMakeLists.txt
 │       ├── package.xml
@@ -114,7 +115,7 @@
 │       │   ├── camera_dump.cpp  配置 + 取 N 帧 + 帧率/丢帧统计 + --view 预览
 │       │   ├── camera_up.cpp    一键自举：挂桥 + 地址 + MTU + 取帧健康确认
 │       │   └── viewer.cpp/.hpp  SDL2 预览窗口（8 位 Mono/Bayer → RGB24）
-│       └── test/hikvision/      mock 单测（生命周期/映射/时间戳/地址规划/后端能力）
+│       └── test/hikvision/      mock 单测（生命周期/映射/时间戳/地址规划/后端能力）+ 取流线程压力用例
 └── .github/
     └── workflows/
         └── ci.yml               组织 CI 模板 + 目录规范 lint

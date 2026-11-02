@@ -19,6 +19,8 @@ namespace foray::platform::driver::livox::detail {
 namespace {
 
 constexpr std::uint8_t kMid360 = 9;
+// HAP 系列是重复扫描机型：`udp_cnt` 是帧内包序号，可以据此推算丢包（审计 H23）。
+constexpr std::uint8_t kHap = 15;
 constexpr std::uint8_t kMid360s = 35;
 constexpr std::uint16_t kCloudPoints = 2;
 constexpr time::Duration kReadTimeout = time::Duration::from_milliseconds(1000);
@@ -120,7 +122,10 @@ TEST_F(LidarTest, LifecycleCloudImuAndStats) {
     const Result<void> read = lidar->read(lease, kReadTimeout);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_TRUE(lease);
-    EXPECT_EQ(lease->count, 4U);
+    // Mid-360 是非重复扫描：第三包虽然把 frame_cnt 从 0 改成 1，也不构成帧边界
+    // （审计 H17）。这一帧由 frame_timeout_ms 超时发布，因此包含三包共 6 点。
+    // 旧实现按 frame_cnt 切帧，这里只拿到 4 点——那正是被审计点名的错误行为。
+    EXPECT_EQ(lease->count, 6U);
     EXPECT_EQ(lease->frame_id, "lidar_front");
     EXPECT_EQ(lease->base_time.nanoseconds_since_epoch(), 1'000'000);
     EXPECT_EQ(lease->points[3].time_offset_ns, 1000);
@@ -149,6 +154,37 @@ TEST_F(LidarTest, LifecycleCloudImuAndStats) {
     EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
     EXPECT_TRUE(lidar->close().ok());
     EXPECT_EQ(api->uninit_calls, 1);
+}
+
+/**
+ * 审计 H23：重复扫描机型（这里用 HAP 的 15）的 `udp_cnt` 是帧内包序号，
+ * 缺口必须出现在 `stats().packets_lost` 里。改前 `SensorStats` 根本没有这个字段，
+ * 网络丢包只能靠"帧点云看着稀疏"猜，长跑时的丢包率完全算不出来。
+ */
+TEST_F(LidarTest, StatsReportUdpCntLossForRepeatingScan) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    const std::string ip = "192.168.1.150";
+    const std::uint32_t handle = ipv4_to_handle(ip);
+    auto lidar = make_device(make_config(ip, "lidar"), api);
+    ASSERT_NE(lidar, nullptr);
+
+    ASSERT_TRUE(lidar->open().ok());
+    api->emit_info(handle, kHap, "SN150", ip);
+    ASSERT_TRUE(lidar->start().ok());
+
+    api->emit_point_packet(handle, kHap, cloud_packet(0, 0, 1'000'000));
+    api->emit_point_packet(handle, kHap, cloud_packet(0, 1, 1'000'500));
+    // 跳过 udp_cnt = 2、3：这两包没到。
+    api->emit_point_packet(handle, kHap, cloud_packet(0, 4, 1'001'000));
+
+    hal::FrameLease<hal::PointCloudFrame> lease;
+    const Result<void> read = lidar->read(lease, kReadTimeout);
+    ASSERT_TRUE(read.ok()) << read.error().message;
+    EXPECT_EQ(lease->count, 3U * kCloudPoints);
+    EXPECT_EQ(lidar->stats().packets_lost, 2U);
+
+    ASSERT_TRUE(lidar->stop().ok());
+    ASSERT_TRUE(lidar->close().ok());
 }
 
 TEST_F(LidarTest, ReadTimeoutAndNoData) {
@@ -224,6 +260,27 @@ TEST_F(LidarTest, RejectsConfigWithoutSelector) {
     EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
 }
 
+/// @brief H19：组帧窗口必须落在逐点相对时间（int32 纳秒）可表达的范围内。
+TEST_F(LidarTest, RejectsFrameDurationBeyondPointOffsetRange) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    hal::LidarConfig config = make_config("192.168.1.190", "livox_frame");
+    config.frame_duration_ms = 2001; // 超出 int32 纳秒可表达窗口（约 2147 ms）
+    auto lidar = make_device(config, api);
+    ASSERT_NE(lidar, nullptr);
+
+    const Result<void> opened = lidar->open();
+    EXPECT_FALSE(opened.ok());
+    EXPECT_EQ(opened.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
+
+    // 边界内的最大值仍然可以打开。
+    hal::LidarConfig accepted = make_config("192.168.1.191", "livox_frame");
+    accepted.frame_duration_ms = 2000;
+    auto second = make_device(accepted, api);
+    ASSERT_NE(second, nullptr);
+    EXPECT_TRUE(second->open().ok()) << "2000 ms 应当仍然可被接受";
+}
+
 TEST_F(LidarTest, RoutesMultipleHandles) {
     auto api = std::make_shared<test::MockLivoxApi>();
     const std::string ip_a = "192.168.1.110";
@@ -267,6 +324,90 @@ TEST_F(LidarTest, RoutesMultipleHandles) {
 
     ASSERT_TRUE(lidar_b->close().ok());
     EXPECT_EQ(api->uninit_calls, 1);
+}
+
+TEST_F(LidarTest, StartTimeoutKeepsOpenStateAndAllowsRetry) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    const std::string ip = "192.168.1.121";
+    const std::uint32_t handle = ipv4_to_handle(ip);
+    auto lidar = make_device(make_config(ip, "lidar_start_retry"), api);
+    ASSERT_NE(lidar, nullptr);
+
+    ASSERT_TRUE(lidar->open().ok());
+    // 设备迟迟不上报信息：start() 只能超时返回，但状态必须留在 kOpen。
+    const Result<void> first = lidar->start();
+    ASSERT_FALSE(first.ok());
+    EXPECT_EQ(first.error().code, ErrorCode::kTimeout);
+    EXPECT_EQ(lidar->state(), hal::DeviceState::kOpen);
+    EXPECT_GE(lidar->stats().timeouts, 1U);
+
+    // 设备上线后原地重试 start() 就能成功，不必先 recover()。
+    api->emit_info(handle, kMid360, "SN-RETRY", ip);
+    const Result<void> second = lidar->start();
+    ASSERT_TRUE(second.ok()) << second.error().message;
+    EXPECT_EQ(lidar->state(), hal::DeviceState::kStreaming);
+}
+
+TEST_F(LidarTest, ControlCallsDoNotBlockWhileRecoverBacksOff) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    const std::string ip = "192.168.1.122";
+    const std::uint32_t handle = ipv4_to_handle(ip);
+    auto lidar = make_device(make_config(ip, "lidar_recover_block"), api);
+    ASSERT_NE(lidar, nullptr);
+
+    ASSERT_TRUE(lidar->open().ok());
+    api->emit_info(handle, kMid360, "SN-B", ip);
+    ASSERT_TRUE(lidar->start().ok());
+    // 五次退避全部打不开设备，让 recover() 走满 100+200+400+800+1600 ms。
+    api->init_failures = 5;
+
+    std::thread recover_thread([&lidar] { (void)lidar->recover(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    const auto begin = std::chrono::steady_clock::now();
+    const Result<void> stopped = lidar->stop();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - begin);
+    EXPECT_TRUE(stopped.ok());
+    // 改前 recover() 全程持锁，这里会等到整段恢复结束（秒级）；改后只等一次尝试。
+    EXPECT_LT(elapsed.count(), 200)
+        << "stop() 被 recover() 的退避拖住了 " << elapsed.count() << " ms";
+
+    recover_thread.join();
+}
+
+TEST_F(LidarTest, RecoverAbortsWhenClosedMeanwhile) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    const std::string ip = "192.168.1.123";
+    const std::uint32_t handle = ipv4_to_handle(ip);
+    auto lidar = make_device(make_config(ip, "lidar_recover_close"), api);
+    ASSERT_NE(lidar, nullptr);
+
+    ASSERT_TRUE(lidar->open().ok());
+    api->emit_info(handle, kMid360, "SN-C", ip);
+    ASSERT_TRUE(lidar->start().ok());
+    api->init_failures = 5;
+
+    Result<void> recovered = Result<void>();
+    std::thread recover_thread([&lidar, &recovered] { recovered = lidar->recover(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    const auto close_begin = std::chrono::steady_clock::now();
+    ASSERT_TRUE(lidar->close().ok());
+    const auto close_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - close_begin);
+    // close() 也不能被恢复中的退避挡住：这条与 stop() 那条测的是同一个锁，但结论不同
+    // （这里要的是 close() 之后恢复必须放手，而不是继续把设备打开）。
+    EXPECT_LT(close_elapsed.count(), 200)
+        << "close() 被 recover() 拖住了 " << close_elapsed.count() << " ms";
+    const int init_calls_after_close = api->init_calls;
+    recover_thread.join();
+
+    // 用户在恢复过程中关掉了雷达：恢复必须放手，不能把设备又打开。
+    EXPECT_FALSE(recovered.ok());
+    EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
+    EXPECT_EQ(api->init_calls, init_calls_after_close)
+        << "恢复线程在 close() 之后仍然重新初始化了 SDK";
 }
 
 TEST_F(LidarTest, RecoversAfterFailure) {

@@ -38,6 +38,8 @@ constexpr std::uint8_t kScanPatternRepetitive = 0x01;
 
 // 恢复退避：100/200/400/800/1600 ms。
 constexpr std::int64_t kRecoverBackoffMs[] = {100, 200, 400, 800, 1600};
+// 组帧窗口上界：逐点相对时间存 int32 ns（约 ±2.147 s），窗口必须先于它被拒。
+constexpr std::uint32_t kMaxFrameDurationMs = 2000;
 
 void sleep_milliseconds(std::int64_t milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
@@ -59,27 +61,113 @@ LidarImpl::~LidarImpl() {
 
 Result<void> LidarImpl::open() {
     std::lock_guard<std::mutex> lock(control_mutex_);
+    ++control_generation_;
     return open_locked();
 }
 
 Result<void> LidarImpl::start() {
+    std::shared_ptr<CallbackSink> sink;
+    {
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        ++control_generation_;
+        const Result<void> prepared = prepare_start_locked(sink);
+        if (!prepared.ok()) {
+            return prepared;
+        }
+    }
+    // 已在取流时 prepare 只回空 sink，没有后续动作。
+    if (sink == nullptr) {
+        return Result<void>();
+    }
+
+    // 真实雷达上报信息前可能要等几秒；这段等待不持 control_mutex_，
+    // 否则 stop()/close() 会被一起拖住（审计 H22）。
+    if (!wait_for_info(sink)) {
+        timeouts_.fetch_add(1, std::memory_order_relaxed);
+        // 状态保持 kOpen：设备晚一点上线可以直接重试 start()，不必走 recover()。
+        return make_error(ErrorCode::kTimeout,
+                          "等待 Livox 设备上线超时，设备仍处于 kOpen，可重试 start");
+    }
+
     std::lock_guard<std::mutex> lock(control_mutex_);
-    return start_locked();
+    return finish_start_locked(sink);
 }
 
 Result<void> LidarImpl::stop() {
     std::lock_guard<std::mutex> lock(control_mutex_);
+    ++control_generation_;
     return stop_locked();
 }
 
 Result<void> LidarImpl::close() {
     std::lock_guard<std::mutex> lock(control_mutex_);
+    ++control_generation_;
     return close_locked();
 }
 
 Result<void> LidarImpl::recover() {
-    std::lock_guard<std::mutex> lock(control_mutex_);
-    return recover_locked();
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        generation = ++control_generation_;
+        const Result<void> prepared = prepare_recover_locked();
+        if (!prepared.ok()) {
+            return prepared;
+        }
+    }
+
+    // 退避与设备上线等待都在锁外：设备离线时整段恢复要 100+200+400+800+1600 ms，
+    // 改前全程持锁，stop()/close() 与状态查询会被一起钉住约 28 s（审计 H22）。
+    Result<void> last_error = make_error(ErrorCode::kInternal, "Livox 恢复尚未执行");
+    for (const std::int64_t backoff_ms : kRecoverBackoffMs) {
+        sleep_milliseconds(backoff_ms);
+
+        std::shared_ptr<CallbackSink> sink;
+        {
+            std::lock_guard<std::mutex> lock(control_mutex_);
+            // 退避期间用户可能已经 close()：恢复不再自作主张把设备重新打开。
+            if (control_generation_ != generation) {
+                return make_error(ErrorCode::kNotOpen, "Livox 恢复被其他控制调用打断");
+            }
+            const Result<void> opened = open_locked();
+            if (!opened.ok()) {
+                last_error = opened.error();
+                continue;
+            }
+            sink = std::atomic_load_explicit(&sink_, std::memory_order_acquire);
+        }
+
+        if (!wait_for_info(sink)) {
+            timeouts_.fetch_add(1, std::memory_order_relaxed);
+            last_error = make_error(ErrorCode::kTimeout, "等待 Livox 设备上线超时");
+            std::lock_guard<std::mutex> lock(control_mutex_);
+            if (control_generation_ != generation) {
+                return make_error(ErrorCode::kNotOpen, "Livox 恢复被其他控制调用打断");
+            }
+            close_locked();
+            continue;
+        }
+
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        if (control_generation_ != generation) {
+            return make_error(ErrorCode::kNotOpen, "Livox 恢复被其他控制调用打断");
+        }
+        const Result<void> started = finish_start_locked(sink);
+        if (started.ok()) {
+            reconnects_.fetch_add(1, std::memory_order_relaxed);
+            return Result<void>();
+        }
+        last_error = started.error();
+        close_locked();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        if (control_generation_ == generation) {
+            state_.store(hal::DeviceState::kError, std::memory_order_release);
+        }
+    }
+    return last_error;
 }
 
 hal::DeviceState LidarImpl::state() const noexcept {
@@ -97,6 +185,7 @@ hal::SensorStats LidarImpl::stats() const noexcept {
     result.frames_delivered = frames_delivered_.load(std::memory_order_relaxed);
     result.frames_dropped = frames_dropped_.load(std::memory_order_relaxed);
     result.packets_dropped = imu_dropped_.load(std::memory_order_relaxed);
+    result.packets_lost = udp_cnt_gaps_.load(std::memory_order_relaxed);
     result.timeouts = timeouts_.load(std::memory_order_relaxed);
     result.sdk_errors = sdk_errors_.load(std::memory_order_relaxed);
     result.reconnects = reconnects_.load(std::memory_order_relaxed);
@@ -219,8 +308,11 @@ Result<void> LidarImpl::open_locked() {
     if (config_.frame_buffer_count == 0) {
         return fail(make_error(ErrorCode::kInvalidArgument, "frame_buffer_count 必须大于 0"));
     }
-    if (config_.frame_duration_ms == 0) {
-        return fail(make_error(ErrorCode::kInvalidArgument, "frame_duration_ms 必须大于 0"));
+    if (config_.frame_duration_ms == 0 || config_.frame_duration_ms > kMaxFrameDurationMs) {
+        // 上界的依据：逐点相对时间存 int32 ns，可表达窗口约 2.147 s；
+        // 组帧窗口必须落在这个范围内，否则靠后的包只能溢出或整包被拒。
+        return fail(
+            make_error(ErrorCode::kInvalidArgument, "frame_duration_ms 超出 [1, 2000] 范围"));
     }
     if (config_.frame_timeout_ms == 0) {
         return fail(make_error(ErrorCode::kInvalidArgument, "frame_timeout_ms 必须大于 0"));
@@ -250,8 +342,7 @@ Result<void> LidarImpl::open_locked() {
 
         std::shared_ptr<CallbackSink> sink = std::make_shared<CallbackSink>();
         sink->queue = queue_;
-        sink->serial = config_.selector.serial;
-        sink->ip_address = config_.selector.ip_address;
+        sink->set_selector(config_.selector.serial, config_.selector.ip_address);
         sink->max_packet_bytes = static_cast<std::uint16_t>(config_.max_packet_bytes);
         sink->handle.store(expected_handle, std::memory_order_release);
         std::atomic_store_explicit(&sink_, std::move(sink), std::memory_order_release);
@@ -268,7 +359,7 @@ Result<void> LidarImpl::open_locked() {
     return Result<void>();
 }
 
-Result<void> LidarImpl::start_locked() {
+Result<void> LidarImpl::prepare_start_locked(std::shared_ptr<CallbackSink>& sink) {
     const hal::DeviceState current = state_.load(std::memory_order_acquire);
     if (current == hal::DeviceState::kStreaming) {
         return Result<void>();
@@ -280,10 +371,19 @@ Result<void> LidarImpl::start_locked() {
         return make_error(ErrorCode::kInternal, "Livox 雷达资源不完整");
     }
 
-    if (!wait_for_info_locked()) {
-        timeouts_.fetch_add(1, std::memory_order_relaxed);
-        state_.store(hal::DeviceState::kError, std::memory_order_release);
-        return make_error(ErrorCode::kTimeout, "等待 Livox 设备上线超时");
+    // 等设备上线要放锁，所以先把回调汇聚点拷出来；收尾时再比对它是否还是当前的 sink_。
+    sink = sink_;
+    return Result<void>();
+}
+
+Result<void> LidarImpl::finish_start_locked(const std::shared_ptr<CallbackSink>& sink) {
+    if (state_.load(std::memory_order_acquire) == hal::DeviceState::kStreaming) {
+        return Result<void>();
+    }
+    if (state_.load(std::memory_order_acquire) != hal::DeviceState::kOpen ||
+        std::atomic_load_explicit(&sink_, std::memory_order_acquire) != sink) {
+        // 等待期间 close()/recover() 换过资源：不能再往旧 sink 上配置，也不再拉线程。
+        return make_error(ErrorCode::kNotOpen, "Livox 雷达在启动过程中状态变化，本次启动放弃");
     }
 
     const std::uint32_t handle = sink_->handle.load(std::memory_order_acquire);
@@ -350,7 +450,7 @@ Result<void> LidarImpl::close_locked() {
     return Result<void>();
 }
 
-Result<void> LidarImpl::recover_locked() {
+Result<void> LidarImpl::prepare_recover_locked() {
     if (state_.load(std::memory_order_acquire) == hal::DeviceState::kClosed) {
         return make_error(ErrorCode::kNotOpen, "Livox 雷达未打开，无法恢复");
     }
@@ -371,27 +471,7 @@ Result<void> LidarImpl::recover_locked() {
 
     release_resources_locked();
     state_.store(hal::DeviceState::kClosed, std::memory_order_release);
-
-    Result<void> last_error = make_error(ErrorCode::kInternal, "Livox 恢复尚未执行");
-    for (const std::int64_t backoff_ms : kRecoverBackoffMs) {
-        sleep_milliseconds(backoff_ms);
-
-        const Result<void> opened = open_locked();
-        if (!opened.ok()) {
-            last_error = opened.error();
-            continue;
-        }
-        const Result<void> started = start_locked();
-        if (started.ok()) {
-            reconnects_.fetch_add(1, std::memory_order_relaxed);
-            return Result<void>();
-        }
-        last_error = started.error();
-        close_locked();
-    }
-
-    state_.store(hal::DeviceState::kError, std::memory_order_release);
-    return last_error;
+    return Result<void>();
 }
 
 Result<void> LidarImpl::configure_locked() {
@@ -430,10 +510,12 @@ Result<void> LidarImpl::configure_locked() {
     return Result<void>();
 }
 
-bool LidarImpl::wait_for_info_locked() {
+bool LidarImpl::wait_for_info(const std::shared_ptr<CallbackSink>& sink) {
+    // 不持 control_mutex_：最长 kInfoWaitMs 的轮询只读 sink 里的原子量，
+    // 持锁等会把 stop()/close() 一起钉住（审计 H22）。
     const time::Timestamp deadline =
         time::SteadyClock().now() + time::Duration::from_milliseconds(kInfoWaitMs);
-    while (!sink_->info_received.load(std::memory_order_acquire)) {
+    while (!sink->info_received.load(std::memory_order_acquire)) {
         if (time::SteadyClock().now() >= deadline) {
             return false;
         }
@@ -447,17 +529,21 @@ void LidarImpl::update_sensor_info_locked() {
     std::lock_guard<std::mutex> lock(info_mutex_);
     info_.vendor = "Livox";
     info_.model = model_name(dev_type);
-    info_.serial = sink_->serial;
+    info_.serial = sink_->serial_copy();
     info_.user_defined_name = config_.selector.user_defined_name;
     info_.firmware_version.clear();
     info_.transport = hal::Transport::kGigE;
-    info_.ip_address = sink_->ip_address.empty() ? config_.selector.ip_address : sink_->ip_address;
+    const std::string sink_ip = sink_->ip_address_copy();
+    info_.ip_address = sink_ip.empty() ? config_.selector.ip_address : sink_ip;
     info_.frame_id = config_.frame_id;
 }
 
 void LidarImpl::parse_loop() {
-    FrameAssembler assembler(pool_, config_.point_buffer_capacity, line_num_, config_.frame_id,
-                             config_.frame_duration_ms);
+    // `finish_start_locked()` 在拉起解析线程前已经解引用过 `sink_`，这里不可能为空；
+    // 机型决定帧边界语义，不允许用「默认机型」兜底。
+    const std::uint8_t dev_type = sink_->dev_type.load(std::memory_order_relaxed);
+    FrameAssembler assembler(pool_, config_.point_buffer_capacity, line_num_, dev_type,
+                             config_.frame_id, config_.frame_duration_ms);
     const std::int64_t timeout_ns = static_cast<std::int64_t>(config_.frame_timeout_ms) * 1'000'000;
 
     PacketSlot slot;
@@ -544,6 +630,10 @@ void LidarImpl::handle_packet(const PacketSlot& slot, FrameAssembler& assembler)
     if (dropped_after > dropped_before) {
         frames_dropped_.fetch_add(dropped_after - dropped_before, std::memory_order_relaxed);
     }
+
+    // 组帧器的计分在解析线程里累加，`stats()` 从别的线程读，镜像成原子量。
+    udp_cnt_gaps_.store(assembler.udp_cnt_gaps(), std::memory_order_relaxed);
+    udp_cnt_anomalies_.store(assembler.udp_cnt_anomalies(), std::memory_order_relaxed);
 }
 
 void LidarImpl::drain_queues_locked() noexcept {

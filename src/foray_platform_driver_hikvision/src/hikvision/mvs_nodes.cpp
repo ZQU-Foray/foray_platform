@@ -1,5 +1,6 @@
 #include "mvs_nodes.hpp"
 
+#include <optional>
 #include <string>
 
 #include "foray/platform/hal/config.hpp"
@@ -9,7 +10,7 @@ namespace foray::platform::driver::hikvision::detail {
 
 namespace {
 
-/// @brief 只在非 0 时下发：`0` 在 `CameraConfig` 里表示「保留设备当前值」。
+/// @brief 只在非 0 时下发：`width`/`height` 的 `0` 表示「保留设备当前值」。
 Result<void> set_int_if_set(MvsApi& api, void* handle, std::string_view node_name,
                             std::int64_t value) {
     if (value == 0) {
@@ -18,12 +19,52 @@ Result<void> set_int_if_set(MvsApi& api, void* handle, std::string_view node_nam
     return api.set_int(handle, node_name, value);
 }
 
+/// @brief 未设置才跳过；显式 0 必须下发（审计 H26 附带项）。
+///
+/// ROI 原点与 binning/decimation 的 `0` 是**合法配置**：设备上残留的旧 ROI 只能靠
+/// 显式写 0 清掉。所以这几项用 `std::optional` 区分「未配置」与「配置成 0」，
+/// 不能再用 `set_int_if_set` 那套「0 即未设置」的约定。
+Result<void> set_optional_int(MvsApi& api, void* handle, std::string_view node_name,
+                              const std::optional<std::uint32_t>& value) {
+    if (!value.has_value()) {
+        return Result<void>();
+    }
+    return api.set_int(handle, node_name, static_cast<std::int64_t>(*value));
+}
+
 Result<void> set_optional_float(MvsApi& api, void* handle, std::string_view node_name,
                                 const std::optional<double>& value) {
     if (!value.has_value()) {
         return Result<void>();
     }
     return api.set_float(handle, node_name, *value);
+}
+
+/**
+ * @brief 读回设备当前的自动模式。
+ *
+ * 自动模式下 `ExposureTime` / `Gain` 在 MVS 里是只读节点，写入会返回
+ * `MV_E_GC_ACCESS`（审计 H11）。下发手动值之前必须先知道设备当前是哪种模式，
+ * 否则「配置写手动值」与「设备其实在自动」会直接冲突，把整个 `open()` 拖垮。
+ *
+ * 读不到或不认识取值时返回 `std::nullopt`：调用方据此**响亮地失败**，
+ * 不猜一个默认模式继续下发（本仓禁止静默兜底）。
+ */
+std::optional<hal::AutoMode> read_auto_mode(MvsApi& api, void* handle, std::string_view node_name) {
+    const Result<std::string> current = api.get_enum(handle, node_name);
+    if (!current.ok()) {
+        return std::nullopt;
+    }
+    if (current.value() == "Off") {
+        return hal::AutoMode::kOff;
+    }
+    if (current.value() == "Once") {
+        return hal::AutoMode::kOnce;
+    }
+    if (current.value() == "Continuous") {
+        return hal::AutoMode::kContinuous;
+    }
+    return std::nullopt;
 }
 
 /// @brief HAL 像素格式 → MVS `PixelFormat` 枚举名；空表示不支持。
@@ -97,31 +138,32 @@ Result<void> apply_geometry(MvsApi& api, void* handle, const hal::CameraConfig& 
     if (auto status = set_int_if_set(api, handle, node::kHeight, config.height); !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kOffsetX, config.offset_x);
+    // ROI 原点与 binning/decimation：未设置才跳过，显式 0 必须下发（审计 H26 附带项）。
+    if (auto status = set_optional_int(api, handle, node::kOffsetX, config.offset_x);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kOffsetY, config.offset_y);
-        !status.ok()) {
-        return status;
-    }
-    if (auto status =
-            set_int_if_set(api, handle, node::kBinningHorizontal, config.binning_horizontal);
+    if (auto status = set_optional_int(api, handle, node::kOffsetY, config.offset_y);
         !status.ok()) {
         return status;
     }
     if (auto status =
-            set_int_if_set(api, handle, node::kBinningVertical, config.binning_vertical);
+            set_optional_int(api, handle, node::kBinningHorizontal, config.binning_horizontal);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kDecimationHorizontal,
-                                     config.decimation_horizontal);
+    if (auto status =
+            set_optional_int(api, handle, node::kBinningVertical, config.binning_vertical);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kDecimationVertical,
-                                     config.decimation_vertical);
+    if (auto status = set_optional_int(api, handle, node::kDecimationHorizontal,
+                                       config.decimation_horizontal);
+        !status.ok()) {
+        return status;
+    }
+    if (auto status =
+            set_optional_int(api, handle, node::kDecimationVertical, config.decimation_vertical);
         !status.ok()) {
         return status;
     }
@@ -147,40 +189,49 @@ Result<void> apply_frame_rate(MvsApi& api, void* handle, const hal::CameraConfig
     return api.set_float(handle, node::kFrameRate, *config.frame_rate_hz);
 }
 
-Result<void> apply_exposure(MvsApi& api, void* handle, const hal::CameraConfig& config) {
+Result<void> apply_exposure(MvsApi& api, void* handle, const hal::CameraConfig& config,
+                            std::uint32_t& optional_errors) {
     if (auto status =
             api.set_enum_by_string(handle, node::kExposureAuto, to_mvs_auto_mode(config.exposure_auto));
         !status.ok()) {
         return status;
     }
     if (config.exposure_auto != hal::AutoMode::kOff) {
-        // 自动曝光接管后手动值不生效，但仍下发一次，便于切回手动时沿用。
-        if (auto status = set_optional_float(api, handle, node::kExposureTime, config.exposure_us);
-            !status.ok()) {
-            return status;
-        }
-        if (auto status = set_optional_float(api, handle, node::kExposureLowerLimit,
-                                             config.exposure_auto_lower_us);
-            !status.ok()) {
-            return status;
-        }
-        return set_optional_float(api, handle, node::kExposureUpperLimit,
-                                  config.exposure_auto_upper_us);
+        // 自动曝光接管后 `ExposureTime` 是只读节点：硬写会拿到 `MV_E_GC_ACCESS`，
+        // 旧实现直接 `return status` 让整个 `open()` 失败。这里跳过手动值并计入
+        // 可选错误，让「配置里的 exposure_us 没有生效」在 `stats.sdk_errors` 上可见。
+        ++optional_errors;
+    } else if (auto status =
+                   set_optional_float(api, handle, node::kExposureTime, config.exposure_us);
+               !status.ok()) {
+        return status;
     }
-    return set_optional_float(api, handle, node::kExposureTime, config.exposure_us);
+    // 上下限属于自动曝光的量程，自动/手动两种模式都可写，因此始终下发。
+    if (auto status = set_optional_float(api, handle, node::kExposureLowerLimit,
+                                         config.exposure_auto_lower_us);
+        !status.ok()) {
+        return status;
+    }
+    return set_optional_float(api, handle, node::kExposureUpperLimit,
+                              config.exposure_auto_upper_us);
 }
 
-Result<void> apply_gain(MvsApi& api, void* handle, const hal::CameraConfig& config) {
+Result<void> apply_gain(MvsApi& api, void* handle, const hal::CameraConfig& config,
+                        std::uint32_t& optional_errors) {
     if (auto status =
             api.set_enum_by_string(handle, node::kGainAuto, to_mvs_auto_mode(config.gain_auto));
         !status.ok()) {
         return status;
     }
-    if (auto status = set_optional_float(api, handle, node::kGain, config.gain_db); !status.ok()) {
+    if (config.gain_auto != hal::AutoMode::kOff) {
+        // 与曝光同构：自动增益下 `Gain` 只读，写入必然失败（审计 H11）。
+        ++optional_errors;
+    } else if (auto status = set_optional_float(api, handle, node::kGain, config.gain_db);
+               !status.ok()) {
         return status;
     }
-    if (auto status = set_optional_float(api, handle, node::kGainLowerLimit,
-                                         config.gain_auto_lower_db);
+    if (auto status =
+            set_optional_float(api, handle, node::kGainLowerLimit, config.gain_auto_lower_db);
         !status.ok()) {
         return status;
     }
@@ -258,10 +309,10 @@ Result<void> apply_config(MvsApi& api, void* handle, const hal::CameraConfig& co
     if (auto status = apply_frame_rate(api, handle, config); !status.ok()) {
         return status;
     }
-    if (auto status = apply_exposure(api, handle, config); !status.ok()) {
+    if (auto status = apply_exposure(api, handle, config, optional_errors); !status.ok()) {
         return status;
     }
-    if (auto status = apply_gain(api, handle, config); !status.ok()) {
+    if (auto status = apply_gain(api, handle, config, optional_errors); !status.ok()) {
         return status;
     }
     if (auto status = apply_trigger(api, handle, config); !status.ok()) {
@@ -279,8 +330,7 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
             if (auto status = api.set_bool(handle, node::kFrameRateEnable, true); !status.ok()) {
                 return status;
             }
-            if (auto status = api.set_float(handle, node::kFrameRate, *frame_rate);
-                !status.ok()) {
+            if (auto status = api.set_float(handle, node::kFrameRate, *frame_rate); !status.ok()) {
                 return status;
             }
         } else {
@@ -301,8 +351,20 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
     if (tuning.exposure_us.has_value()) {
         const auto& exposure = *tuning.exposure_us;
         if (exposure.has_value()) {
-            if (auto status = api.set_float(handle, node::kExposureTime, *exposure);
-                !status.ok()) {
+            // 只有手动模式才能改 `ExposureTime`；自动模式下这是只读节点（审计 H11），
+            // 与其让 SDK 报一个语焉不详的 `MV_E_GC_ACCESS`，不如在这里说清楚。
+            const auto current = read_auto_mode(api, handle, node::kExposureAuto);
+            if (!current.has_value()) {
+                return Result<void>(make_error(
+                    ErrorCode::kSdkError, "无法读回 ExposureAuto，不能确认能否写 ExposureTime"));
+            }
+            if (*current != hal::AutoMode::kOff) {
+                return Result<void>(make_error(
+                    ErrorCode::kNotSupported,
+                    std::string("ExposureAuto 当前为 ") + std::string(to_mvs_auto_mode(*current)) +
+                        "，ExposureTime 是只读节点；先下发 exposure_auto=off"));
+            }
+            if (auto status = api.set_float(handle, node::kExposureTime, *exposure); !status.ok()) {
                 return status;
             }
         } else {
@@ -334,6 +396,17 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
     if (tuning.gain_db.has_value()) {
         const auto& gain = *tuning.gain_db;
         if (gain.has_value()) {
+            const auto current = read_auto_mode(api, handle, node::kGainAuto);
+            if (!current.has_value()) {
+                return Result<void>(
+                    make_error(ErrorCode::kSdkError, "无法读回 GainAuto，不能确认能否写 Gain"));
+            }
+            if (*current != hal::AutoMode::kOff) {
+                return Result<void>(make_error(ErrorCode::kNotSupported,
+                                               std::string("GainAuto 当前为 ") +
+                                                   std::string(to_mvs_auto_mode(*current)) +
+                                                   "，Gain 是只读节点；先下发 gain_auto=off"));
+            }
             if (auto status = api.set_float(handle, node::kGain, *gain); !status.ok()) {
                 return status;
             }

@@ -23,6 +23,21 @@ constexpr std::size_t kPacketHeaderBytes = 36;
 constexpr std::size_t kMaxLidars = 32;
 
 /// @brief SDK 回调给出的原始包视图；指针只在回调期间有效。
+///
+/// @par 契约：`size` 是设备自报长度，可信源在 SDK（审计 H26）
+/// `size` 取自 SDK 结构体的 `length` 字段（`livox_api_real.cpp` 的
+/// `view.size = data->length`），即**设备自报**的头 + 载荷总长。本仓把它当作
+/// 源缓冲长度是显式契约，前提是 SDK 保证「回调期间 `data` 指向完整包」——
+/// 这条保证不在本仓可验证范围内（`FORAY_BUILD_DRIVER_LIVOX=OFF` 时连结构体
+/// 布局都编译不进来），所以**不能**把它当成本仓自己算出来的长度。
+///
+/// 因此凡是消费 `size` 的地方都必须自己再做一次上界检查，不许直接拿它做
+/// `memcpy` 长度或数组下标。当前三道：
+/// - `CallbackSink::push()` 拒绝 `size < kPacketHeaderBytes` 或
+///   `size > max_packet_bytes`（默认 1500），只有通过者才 `memcpy` 进定长
+///   `PacketSlot::data`；
+/// - `parse_header()` 要求 `length <= size` 且 `length >= kPacketHeaderBytes`；
+/// - `parse_points()` 要求 `dot_num × stride <= length - kPacketHeaderBytes`。
 struct PacketView {
     std::uint32_t handle = 0;
     std::uint8_t dev_type = 0;

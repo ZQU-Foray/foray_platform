@@ -4,10 +4,36 @@
 
 namespace foray::platform::driver::livox::detail {
 
+namespace {
+
+/**
+ * @brief 设备时间整段回退的判定门限。
+ *
+ * 小于该值的回退是乱序/抖动（同帧内 10 ms 量级、跨帧不超过几百毫秒），必须丢掉，
+ * 否则更旧的时间戳会被当成新帧基准、把帧率打散；大于该值的回退只可能是 PTP 阶跃、
+ * GPS 重新授时或设备重启，属于"新纪元"，硬丢会让驱动永远等不到更大的时间戳。
+ * 取 1 s：远大于实际的乱序窗口，又小于阶跃量级（秒级及以上）。
+ */
+constexpr std::int64_t kBaseClockJumpNs = 1'000'000'000;
+
+/**
+ * @brief `udp_cnt` 缺口算「丢包」还是算「乱序/重置」的分界（半个 uint16 圈）。
+ *
+ * `udp_cnt` 是 16 位计数，缺口按模 65536 求差：真实丢包只会让计数往前跳过一小段，
+ * 而乱序包（旧计数迟到）或设备重启后的计数重置会让差值接近一整圈。取半圈 32768：
+ * 一帧内的包数远小于它（200k 点/帧、每包 96 点也只有约 2100 包），所以前向缺口落在这
+ * 一侧的判定不会误伤；越界的差值只记异常次数，不污染丢包指标。
+ */
+constexpr std::uint16_t kUdpCntGapLimit = 32768;
+
+} // namespace
+
 FrameAssembler::FrameAssembler(std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> pool,
                                std::uint32_t point_capacity, std::uint8_t line_num,
-                               std::string_view frame_id, std::uint32_t frame_duration_ms)
-    : pool_(std::move(pool)), capacity_(point_capacity), line_num_(line_num), frame_id_(frame_id),
+                               std::uint8_t dev_type, std::string_view frame_id,
+                               std::uint32_t frame_duration_ms)
+    : pool_(std::move(pool)), capacity_(point_capacity), line_num_(line_num),
+      frame_cnt_represents_frame_(frame_cnt_represents_frame(dev_type)), frame_id_(frame_id),
       frame_duration_ns_(static_cast<std::int64_t>(frame_duration_ms) * 1'000'000) {
 }
 
@@ -16,18 +42,22 @@ bool FrameAssembler::on_packet(const PacketHeader& header, const std::uint8_t* p
     last_packet_steady_ns_ = receive_steady_ns;
 
     bool published = false;
-    const bool frame_boundary = writer_.has_value() && (header.frame_cnt != current_frame_cnt_ ||
-                                                        (header.udp_cnt == 0 && count_ > 0) ||
-                                                        frame_expired(header, receive_steady_ns));
+    const bool frame_boundary = writer_.has_value() && is_frame_boundary(header, receive_steady_ns);
 
     if (!writer_.has_value() || frame_boundary) {
         if (writer_.has_value()) {
             published = publish();
         }
+        if (!accept_frame_base(header)) {
+            points_dropped_.fetch_add(header.dot_num, std::memory_order_relaxed);
+            return published;
+        }
         if (!begin_frame(header, receive_steady_ns)) {
             return published;
         }
     }
+
+    note_udp_cnt(header);
 
     if (dropping_ || frame_overflow_ || header.dot_num == 0) {
         if (frame_overflow_ || dropping_) {
@@ -79,6 +109,47 @@ bool FrameAssembler::flush() {
     return publish();
 }
 
+bool FrameAssembler::is_frame_boundary(const PacketHeader& header,
+                                       std::uint64_t receive_steady_ns) {
+    if (!frame_cnt_represents_frame_) {
+        // 非重复扫描机型（Mid-360/360s）：frame_cnt 与 udp_cnt 都不承担帧边界语义，
+        // 按它们切帧会把一帧切成几十段。变化只计入观测计数，切帧只认时间窗。
+        if (header.frame_cnt != current_frame_cnt_) {
+            frame_cnt_discontinuities_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return frame_expired(header, receive_steady_ns);
+    }
+    return header.frame_cnt != current_frame_cnt_ || (header.udp_cnt == 0 && count_ > 0) ||
+           frame_expired(header, receive_steady_ns);
+}
+
+bool FrameAssembler::accept_frame_base(const PacketHeader& header) noexcept {
+    const auto candidate = static_cast<std::int64_t>(header.timestamp_ns);
+    if (candidate <= 0) {
+        // 没有设备时间戳：只有在还没有任何基准的流里才接受（整段无 PTP 的纯接收时钟流）；
+        // 已有基准时，时间戳为 0 只可能是损坏包或设备重启前的滞后包。
+        if (last_base_device_ns_ <= 0) {
+            return true;
+        }
+        stale_time_packets_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (last_base_device_ns_ <= 0) {
+        return true;
+    }
+    if (candidate > last_base_device_ns_) {
+        return true;
+    }
+    if (last_base_device_ns_ - candidate > kBaseClockJumpNs) {
+        // 整段回退：PTP 阶跃 / 重新授时 / 设备重启，按新纪元接受。
+        clock_jumps_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    // 乱序或小幅回退：不能让它成为新帧基准，否则 frame_expired() 会对后续每个包立即成立。
+    stale_time_packets_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
 bool FrameAssembler::frame_expired(const PacketHeader& header,
                                    std::uint64_t receive_steady_ns) const noexcept {
     if (!writer_.has_value() || count_ == 0 || frame_duration_ns_ <= 0) {
@@ -104,13 +175,46 @@ bool FrameAssembler::begin_frame(const PacketHeader& header, std::uint64_t recei
     writer_ = std::move(*writer);
     current_frame_cnt_ = header.frame_cnt;
     base_device_ns_ = static_cast<std::int64_t>(header.timestamp_ns);
+    if (base_device_ns_ > 0) {
+        // 单调水线：只接受比上一帧基准更晚的时间戳（整段回退已由 accept_frame_base 记数放行）。
+        last_base_device_ns_ = base_device_ns_;
+    }
     base_receive_steady_ns_ = receive_steady_ns;
     sync_ = sync_from_time_type(header.time_type);
     count_ = 0;
     frame_dropped_packets_ = 0;
     frame_overflow_ = false;
     dropping_ = false;
+    // 新的一帧重新开始数 udp_cnt：帧首包本身就是新序列的起点，不能与上一帧的末包求差。
+    udp_cnt_seen_ = false;
+    last_udp_cnt_ = 0;
     return true;
+}
+
+void FrameAssembler::note_udp_cnt(const PacketHeader& header) noexcept {
+    if (!frame_cnt_represents_frame_) {
+        // 非重复扫描机型：`udp_cnt` 不承担帧内序号语义，按它求差只会得到假缺口。
+        return;
+    }
+    if (!udp_cnt_seen_) {
+        udp_cnt_seen_ = true;
+        last_udp_cnt_ = header.udp_cnt;
+        return;
+    }
+
+    // 以「本包」为下一包的基准：坏包/乱序包不会让后续每个包都被算成缺口。
+    const std::uint16_t expected = static_cast<std::uint16_t>(last_udp_cnt_ + 1U);
+    last_udp_cnt_ = header.udp_cnt;
+    if (header.udp_cnt == expected) {
+        return;
+    }
+
+    const std::uint16_t step = static_cast<std::uint16_t>(header.udp_cnt - expected);
+    if (step < kUdpCntGapLimit) {
+        udp_cnt_gaps_.fetch_add(step, std::memory_order_relaxed);
+    } else {
+        udp_cnt_anomalies_.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool FrameAssembler::publish() {

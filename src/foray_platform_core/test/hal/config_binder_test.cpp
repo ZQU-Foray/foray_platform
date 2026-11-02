@@ -160,8 +160,10 @@ TEST(ConfigBinderTest, CameraBindsExtendedDefaults) {
     EXPECT_EQ(config.gain_auto, AutoMode::kOff);
     EXPECT_EQ(config.timestamp_source, TimestampSource::kAuto);
     EXPECT_EQ(config.packet_size, 0U);
-    EXPECT_EQ(config.binning_horizontal, 0U);
-    EXPECT_EQ(config.decimation_vertical, 0U);
+    EXPECT_FALSE(config.offset_x.has_value());
+    EXPECT_FALSE(config.offset_y.has_value());
+    EXPECT_FALSE(config.binning_horizontal.has_value());
+    EXPECT_FALSE(config.decimation_vertical.has_value());
     EXPECT_EQ(config.pool_memory_limit_bytes, 0U);
     EXPECT_TRUE(config.frame_rate_enable);
     EXPECT_FALSE(config.trigger.source.has_value());
@@ -170,6 +172,25 @@ TEST(ConfigBinderTest, CameraBindsExtendedDefaults) {
     EXPECT_FALSE(config.gain_auto_upper_db.has_value());
     EXPECT_FALSE(config.net_export.has_value());
     EXPECT_FALSE(config.device_to_host_offset_ns.has_value());
+}
+
+/// @brief 审计 H26 附带项：显式配 0 的 ROI 原点必须与「未配置」区分开。
+TEST(ConfigBinderTest, CameraBindsExplicitZeroRoi) {
+    const param::ParamSchema schema = make_camera_param_schema();
+    const param::ParamSnapshot snapshot = make_snapshot(
+        schema, param::ParamValueMap{{"camera.serial", param::ParamValue("DA123")},
+                                     {"camera.offset_x", param::ParamValue(0)},
+                                     {"camera.binning_horizontal", param::ParamValue(0)}});
+
+    const Result<CameraConfig> result = bind_camera_config(snapshot);
+
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const CameraConfig& config = result.value();
+    ASSERT_TRUE(config.offset_x.has_value());
+    EXPECT_EQ(*config.offset_x, 0U);
+    EXPECT_FALSE(config.offset_y.has_value());
+    ASSERT_TRUE(config.binning_horizontal.has_value());
+    EXPECT_EQ(*config.binning_horizontal, 0U);
 }
 
 TEST(ConfigBinderTest, CameraBindsExtendedValues) {
@@ -202,8 +223,10 @@ TEST(ConfigBinderTest, CameraBindsExtendedValues) {
 
     ASSERT_TRUE(result.ok()) << result.error().message;
     const CameraConfig& config = result.value();
-    EXPECT_EQ(config.binning_horizontal, 2U);
-    EXPECT_EQ(config.decimation_vertical, 3U);
+    ASSERT_TRUE(config.binning_horizontal.has_value());
+    EXPECT_EQ(*config.binning_horizontal, 2U);
+    ASSERT_TRUE(config.decimation_vertical.has_value());
+    EXPECT_EQ(*config.decimation_vertical, 3U);
     EXPECT_EQ(config.exposure_auto, AutoMode::kContinuous);
     ASSERT_TRUE(config.exposure_auto_lower_us.has_value());
     EXPECT_DOUBLE_EQ(*config.exposure_auto_lower_us, 100.0);

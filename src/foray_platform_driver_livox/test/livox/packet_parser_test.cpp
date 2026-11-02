@@ -151,6 +151,48 @@ TEST(PacketParserTest, RejectsDualEcho) {
     EXPECT_EQ(parsed.error().code, ErrorCode::kUnsupportedFormat);
 }
 
+/**
+ * @brief H19：逐点相对时间存 int32 ns，越界必须拒包而不是静默溢出。
+ *
+ * 旧实现 `static_cast<std::int32_t>(packet_offset_ns + intra_ns)` 在组帧窗口被配得过大
+ * （> 2147 ms）时会把偏移截断成随机值甚至负数，时间域整体错乱且没有任何告警。
+ */
+TEST(PacketParserTest, RejectsPointOffsetOutsideInt32) {
+    std::vector<std::uint8_t> payload;
+    test::HighPointWire point{1000, 0, 0, 0, 0};
+    test::append(payload, &point, sizeof(point));
+
+    const auto parse_with = [&payload](std::uint64_t timestamp_ns, std::int64_t base_ns) {
+        const std::vector<std::uint8_t> packet =
+            make_packet(0x01, 1, 1, 0, 0, timestamp_ns, 0, payload);
+        const Result<PacketHeader> header = parse_header(packet.data(), packet.size());
+        hal::PointXYZITL out{};
+        std::size_t count = 0;
+        const Result<void> parsed =
+            parse_points(header.value(), packet.data(), packet.size(), 1, base_ns, &out, 1, count);
+        return std::pair<Result<void>, std::int32_t>(parsed, out.time_offset_ns);
+    };
+
+    constexpr std::int64_t kInt32Max = 2'147'483'647;
+    constexpr std::int64_t kInt32Min = -2'147'483'648;
+
+    // 边界值本身仍可表达（0 与 ±(2^31-1) / -2^31）。
+    EXPECT_TRUE(parse_with(0, 0).first.ok());
+    EXPECT_EQ(parse_with(0, 0).second, 0);
+    EXPECT_TRUE(parse_with(static_cast<std::uint64_t>(kInt32Max), 0).first.ok());
+    EXPECT_EQ(parse_with(static_cast<std::uint64_t>(kInt32Max), 0).second, kInt32Max);
+    EXPECT_TRUE(parse_with(std::uint64_t{0}, -kInt32Min).first.ok());
+    EXPECT_EQ(parse_with(std::uint64_t{0}, -kInt32Min).second, kInt32Min);
+
+    // 正/负各越界一格：整包拒收，错误码为参数非法。
+    const auto above = parse_with(static_cast<std::uint64_t>(kInt32Max + 1), 0);
+    EXPECT_FALSE(above.first.ok());
+    EXPECT_EQ(above.first.error().code, ErrorCode::kInvalidArgument);
+    const auto below = parse_with(std::uint64_t{0}, -kInt32Min + 1);
+    EXPECT_FALSE(below.first.ok());
+    EXPECT_EQ(below.first.error().code, ErrorCode::kInvalidArgument);
+}
+
 TEST(PacketParserTest, ParsesImu) {
     std::vector<std::uint8_t> payload(24, 0);
     test::put_f32(payload, 0, 0.1F);
@@ -181,6 +223,32 @@ TEST(PacketParserTest, MapsTimeType) {
     EXPECT_EQ(sync_from_time_type(3), hal::TimestampSync::kPps);
     EXPECT_EQ(sync_from_time_type(4), hal::TimestampSync::kPps);
     EXPECT_EQ(sync_from_time_type(9), hal::TimestampSync::kUnknown);
+}
+
+// 审计 H21：`rsvd`(12–23) 与 `crc32`(24–27) 这两段本仓不读也不校验——校验由 Livox
+// SDK2 在回调前完成。把这两段任意改成垃圾，解析结果必须一字不差；哪天有人给它加校验，
+// 这条会红，届时 `docs/driver_livox.md` §4 的偏移表也必须一起改。
+TEST(PacketParserTest, HeaderIgnoresReservedAndCrc32Bytes) {
+    const std::vector<std::uint8_t> payload = test::high_point_payload(1000, -2000, 3000, 77, 3);
+    const std::vector<std::uint8_t> clean =
+        make_packet(0x01, 1, 1, 9, 4, 123456789ULL, 10, payload);
+    std::vector<std::uint8_t> dirty = clean;
+    for (std::size_t offset = 12; offset < 28; ++offset) {
+        dirty[offset] = 0xEE;
+    }
+
+    const Result<PacketHeader> original = parse_header(clean.data(), clean.size());
+    const Result<PacketHeader> tampered = parse_header(dirty.data(), dirty.size());
+    ASSERT_TRUE(original.ok()) << original.error().message;
+    ASSERT_TRUE(tampered.ok()) << tampered.error().message;
+    EXPECT_EQ(tampered.value().length, original.value().length);
+    EXPECT_EQ(tampered.value().time_interval, original.value().time_interval);
+    EXPECT_EQ(tampered.value().dot_num, original.value().dot_num);
+    EXPECT_EQ(tampered.value().udp_cnt, original.value().udp_cnt);
+    EXPECT_EQ(tampered.value().frame_cnt, original.value().frame_cnt);
+    EXPECT_EQ(tampered.value().data_type, original.value().data_type);
+    EXPECT_EQ(tampered.value().time_type, original.value().time_type);
+    EXPECT_EQ(tampered.value().timestamp_ns, original.value().timestamp_ns);
 }
 
 TEST(PacketParserTest, ConvertsIpv4AndModel) {

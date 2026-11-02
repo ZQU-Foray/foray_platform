@@ -76,6 +76,8 @@ class MockMvsApi final : public detail::MvsApi {
     std::uint32_t trigger_error = 0;
     /// 非 0 时 `close_device()` 返回该错误码（用于验证 destroy 仍被调用）。
     std::uint32_t close_error = 0;
+    /// 非 0 时 `register_exception()` 返回该错误码（用于验证注册失败会让 open() 失败）。
+    std::uint32_t register_exception_error = 0;
 
     // —— 可编程输入：节点 ——
     std::map<std::string, std::int64_t, std::less<>> int_values;
@@ -211,6 +213,10 @@ class MockMvsApi final : public detail::MvsApi {
         static_cast<void>(handle);
         destroy_calls.fetch_add(1);
         record("destroy_handle");
+        // 模拟 SDK 的语义：MV_CC_DestroyHandle 返回后不再回调（审计 H10 的修复前提）。
+        std::lock_guard<std::mutex> lock(mutex_);
+        exception_callback = nullptr;
+        exception_user = nullptr;
     }
 
     Result<void> open_device(void* handle) override {
@@ -233,18 +239,22 @@ class MockMvsApi final : public detail::MvsApi {
         return Result<void>();
     }
 
-    void register_exception(void* handle, detail::ExceptionCallback callback,
-                            void* user) override {
+    Result<void> register_exception(void* handle, detail::ExceptionCallback callback,
+                                    void* user) override {
         static_cast<void>(handle);
         register_exception_calls.fetch_add(1);
         record("register_exception");
+        if (register_exception_error != 0) {
+            return Result<void>(
+                detail::mvs_failure("MV_CC_RegisterExceptionCallBack", register_exception_error));
+        }
         std::lock_guard<std::mutex> lock(mutex_);
         exception_callback = callback;
         exception_user = user;
+        return Result<void>();
     }
 
-    Result<void> set_int(void* handle, std::string_view node_name,
-                        std::int64_t value) override {
+    Result<void> set_int(void* handle, std::string_view node_name, std::int64_t value) override {
         static_cast<void>(handle);
         return record_write(node_name, "int", std::to_string(value));
     }

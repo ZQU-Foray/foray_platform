@@ -246,6 +246,10 @@ state = kOpen
   `close_device` + `destroy_handle` → 退避重试（100/200/400/800/1600 ms，最多 5 次）
   重新 `enumerate → create → open → configure` → 成功置 `kOpen`（**不自动开始取流**，
   与 HAL「recover 回到可 start 状态」一致）。
+  审计 H15：`recover()` **不清**会话级计数器与 `sequence_`——清零只在用户主动
+  `open()` 时由 `reset_session_counters_locked()` 做。否则自动恢复一次之后，
+  消费者看到 `sequence` 从 1000 掉回 1（断帧/乱序判定失效），统计也会丢掉掉线前的
+  累计，现场表现成「掉线过，但一帧没丢」。
 
 ## 5. 取流线程与帧池
 
@@ -253,22 +257,42 @@ state = kOpen
 
 ```cpp
 void CameraImpl::grab_loop() {
-    std::uint32_t consecutive_errors = 0;
-    while (!stop_.load(std::memory_order_acquire)) {
+    while (!stop_requested_.load(std::memory_order_acquire)) {
         auto frame = api_->get_frame(handle_, kGrabTimeoutMs);
         if (!frame.ok()) {
-            if (frame.error().code == ErrorCode::kTimeout || frame.error().code == ErrorCode::kNoData) {
+            const Error& error = frame.error();
+            last_vendor_code_.store(error.vendor_code, std::memory_order_relaxed);
+            // MV_E_NODATA 与不带厂商码的 kTimeout 都是「这次没数据」；
+            // 带厂商码的 kTimeout 是 MV_E_GC_TIMEOUT 之类的真实故障。
+            const bool silent = error.code == ErrorCode::kNoData ||
+                                (error.code == ErrorCode::kTimeout && error.vendor_code == 0);
+            if (silent) {
                 timeouts_.fetch_add(1, std::memory_order_relaxed);
-                continue;  // 正常控制流，不 sleep 轮询
+                if (wait_for_trigger_.load(std::memory_order_relaxed)) {
+                    starve_since_ns_ = 0;
+                    continue;  // 触发模式下等触发可以无限长
+                }
+                const std::int64_t now_ns = time::SteadyClock().now().nanoseconds_since_epoch();
+                if (starve_since_ns_ == 0) {
+                    starve_since_ns_ = now_ns;
+                    continue;
+                }
+                if (now_ns - starve_since_ns_ >= kStarvationWindowNs) {
+                    sdk_errors_.fetch_add(1, std::memory_order_relaxed);
+                    state_.store(hal::DeviceState::kError, std::memory_order_release);
+                    return;
+                }
+                continue;
             }
             sdk_errors_.fetch_add(1, std::memory_order_relaxed);
             if (++consecutive_errors >= kMaxConsecutiveErrors) {
-                state_.store(DeviceState::kError, std::memory_order_release);
-                break;
+                state_.store(hal::DeviceState::kError, std::memory_order_release);
+                return;
             }
             continue;
         }
-        consecutive_errors = 0;
+        consecutive_errors_.store(0, std::memory_order_relaxed);
+        starve_since_ns_ = 0;
         publish_frame(*frame);
         api_->free_frame(handle_, std::move(frame));  // 同线程归还，绝不跨线程
     }
@@ -277,12 +301,29 @@ void CameraImpl::grab_loop() {
 
 - `kGrabTimeoutMs = 100`：`hal_sensor_driver_research.md` §4.3 给出的区间 50–100 ms
   上界；超时是正常控制流，靠 SDK 阻塞等待而不是 `sleep(1ms)` 轮询（`sp_vision_25` 的做法）。
+- **「没数据」与「链路失败」分家**（审计 H13）：
+  - `MV_E_NODATA`（0x80000007，SDK 原文是「超时，未收到数据」）与不带厂商码的
+    `ErrorCode::kTimeout` 属于正常等待，只累加 `timeouts`；
+  - 带厂商码的 `kTimeout`（即 `MV_E_GC_TIMEOUT` 0x80000107）在抓流里出现说明控制通道
+    或链路已经不对，计入 `sdk_errors` 与连续失败计数；
+  - 自由运行时沉默超过 `kStarvationWindowNs`（2 s）判定流已停摆，置 `kError` 交给上层
+    `recover()`。用时间而非迭代次数：真实 SDK 每次等待 100 ms，测试 mock 只 sleep 1 ms，
+    按次数判会让同一份代码在两种环境下阈值差 100 倍。2 s 比本文档声明的最低帧率 1 Hz
+    留了一倍余量；
+  - 触发模式下「没数据」是正常状态，不判停摆（`wait_for_trigger_` 在 `start_locked()`
+    按 `config_.trigger.mode` 一次性写入——触发方式是 static 级配置）。
 - `kMaxConsecutiveErrors = 5`：连续 5 次非超时错误即判 `kError`；不自动重连（HAL 约定），
   由上层决定是否 `recover()`。
 - `publish_frame()`：
   - 校验 `info.pixel_format` 落在 `is_supported_pixel_format()` 内，否则计 `sdk_errors_` 并丢帧；
   - 校验 `frame_length >= stride * height`（`stride = width`，8 位单平面 MVS 帧是连续的）；
     不满足时丢帧并计 `sdk_errors_`，首帧就 mismatch 则置 `kError` 并返回 `kUnsupportedFormat`；
+  - **校验帧几何与帧池一致**（审计 H14）：池是按 `open()` 读回的 `Width`/`Height` 分配的
+    （`pool_width_`/`pool_height_`），`info.width/height` 与之不符说明设备换了几何
+    （固件 ROI 对齐修正、恢复 user set、在线改分辨率）——整帧拒绝并计 `sdk_errors_` +
+    `frames_dropped_`。不截断：只拷槽位容量却宣告新 `stride/height`，消费者按
+    `data + y*stride` 逐行读会越过槽位缓冲。几何一致后拷贝量就是
+    `pool_width_ * pool_height_`，不取 `min`；
   - `try_acquire_writer()` 拿不到槽位 → 计 `frames_dropped_`（等价于 `no_slot()`）后丢帧；
   - `std::memcpy` + 填 `ImageFrame` 元数据（§7）+ `publish()`。
 - 热路径无 new/日志/锁：`ImageFrame::frame_id` 是 `std::string_view`，驱动内部持有一份
@@ -341,11 +382,11 @@ Result<void> CameraImpl::read(FrameLease<ImageFrame>& out, time::Duration timeou
 | `pixel_format` | `PixelFormat` | `SetEnumValue` | 只映射到 8 位 Mono/Bayer；对应 `PixelType_Gvsp_*` 常量（PixelType.h:41/51–54） |
 | `frame_rate_enable` | `AcquisitionFrameRateEnable` | `SetBoolValue` | 只在显式限速时置 true |
 | `frame_rate_hz` | `AcquisitionFrameRateEnable=true` + `AcquisitionFrameRate` | `SetBoolValue` + `SetFloatValue` | 触发模式下已由 binder 拒绝；不要用废弃的 `MV_CC_SetFrameRate` |
-| `exposure_us` | `ExposureAuto=Off` + `ExposureTime` | `SetEnumValue` + `SetFloatValue` | 未设置表示不写 |
-| `exposure_auto` | `ExposureAuto` | `SetEnumValue` | 非 `Off` 时设备接管曝光，忽略 `exposure_us` |
+| `exposure_us` | `ExposureTime`（仅 `ExposureAuto=Off` 后） | `SetFloatValue` | 未设置表示不写；自动模式下**不下发**（节点只读，见下） |
+| `exposure_auto` | `ExposureAuto` | `SetEnumValue` | 非 `Off` 时设备接管曝光，本条配置里的 `exposure_us` 不下发 |
 | `exposure_auto_lower_us` / `exposure_auto_upper_us` | `AutoExposureTimeLowerLimit` / `AutoExposureTimeUpperLimit` | `SetFloatValue` | 仅自动曝光时有效 |
-| `gain_db` | `GainAuto=Off` + `Gain` | `SetEnumValue` + `SetFloatValue` | 未设置表示不写 |
-| `gain_auto` | `GainAuto` | `SetEnumValue` | 非 `Off` 时忽略 `gain_db` |
+| `gain_db` | `Gain`（仅 `GainAuto=Off` 后） | `SetFloatValue` | 未设置表示不写；自动模式下**不下发** |
+| `gain_auto` | `GainAuto` | `SetEnumValue` | 非 `Off` 时本条配置里的 `gain_db` 不下发 |
 | `gain_auto_lower_db` / `gain_auto_upper_db` | `AutoGainLowerLimit` / `AutoGainUpperLimit` | `SetFloatValue` | 仅自动增益时有效 |
 | `trigger.mode = kOff` | `TriggerMode=Off` | `SetEnumValue` | `MV_TRIGGER_MODE_OFF = 0`（CameraParams.h:866） |
 | `trigger.mode = kLine0..kLine3` | `TriggerMode=On` + `TriggerSource=Line0..3` | 两次 `SetEnumValue` | 硬件触发 |
@@ -354,6 +395,12 @@ Result<void> CameraImpl::read(FrameLease<ImageFrame>& out, time::Duration timeou
 | `trigger.activation` | `TriggerActivation` | `SetEnumValueByString` | 用字符串（`RisingEdge`/`FallingEdge`/`LevelHigh`/`LevelLow`）避开型号枚举差异 |
 | `trigger.debounce_us` | `LineDebouncerTime` | `SetFloatValue` | 已由 binder 映射 |
 | `sdk_node_count` | —（函数） | `MV_CC_SetImageNodeNum` | 必须在 `StartGrabbing` 之前 |
+
+> **自动模式下的只读节点（审计 H11）**：`ExposureTime` 与 `Gain` 在 `ExposureAuto`/`GainAuto`
+> 不为 `Off` 时是只读节点，写入会返回 `MV_E_GC_ACCESS`。因此 `open()` 阶段遇到「自动模式 +
+> 手动值」只跳过手动值并把次数累加到 `stats.sdk_errors`（不阻断打开），而运行期
+> `apply_tuning()` 改手动值时若设备仍在自动模式，会直接返回 `kNotSupported` 并说明原因——
+> 不再让一个语焉不详的 SDK 错误码自己漂上来。
 | `enable_ptp` | `GevIEEE1588` | `SetBoolValue` | 仅 GigE；USB3 配 PTP → `kNotSupported` |
 | `buffer_count` | —（HAL 帧池） | — | 槽数 `max(2, buffer_count)` |
 | `pool_memory_limit_bytes` | —（HAL 帧池） | — | 0 表示不限制；超限时 `kQueueFull` |
@@ -384,26 +431,50 @@ MVS 侧可用信息：
 | `nSecondCount` / `nCycleCount` / `nCycleOffset` | GVSP 水印时标（GigE） | 首期只记录，不参与换算 |
 | `GevIEEE1588Status` | PTP 状态（Master/Slave） | 判定 `kPtp` |
 
-三条路径，按优先级：
+三条路径，按优先级（`stamp` 恒为绝对墙钟，`device_time_ns` 恒为设备计数换算值，
+**两个时间域的值永不互相顶替**）：
 
 1. **设备时间已校准**（`enable_ptp` 且 `GevIEEE1588Status == Slave`）：
    `device_time_ns = device_ticks * 1e9 / tick_freq`，
    `stamp = Timestamp::from_nanoseconds(device_time_ns)`，`sync = kPtp`。
-2. **主机接收 + 标定偏移**（`device_to_host_offset_ns` 已配置）：
-   `stamp = Timestamp::from_nanoseconds(receive_wall_ns + offset_ns)`、
-   `sync = kDeviceCalibrated`；同时仍填 `device_time_ns = ticks → ns`（若 tick 频率可读）
-   与 `device_tick_frequency_hz`，供离线重算。
+   PTP 从时钟在线时设备计数本身就在墙钟时基上，这个等式才成立。
+2. **设备时间 + 标定偏移**（`device_to_host_offset_ns` 非 0）：
+   `stamp = Timestamp::from_nanoseconds(device_time_ns + offset_ns)`、
+   `sync = kDeviceCalibrated`。偏移的方向是「设备 → 主机」的**加性**修正，
+   不是拿 `receive_wall_ns` 去加——那样既用错了被加数，又凭空多出一倍偏差。
+   偏移把时间推出 `int64` 时按「标定不可信」处理，退到路径 3 / 无同步。
 3. **无同步**：`allow_unsynced_stamp == true` 时
    `stamp = Timestamp::from_nanoseconds(receive_wall_ns - exposure_to_host_latency_ns)`、
    `sync = kHostReceive`（**不是曝光时刻**，命名即警告）；
    `allow_unsynced_stamp == false` 时 `stamp` 置零、`sync = kNoSync`。
    `exposure_to_host_latency_ns` 缺省按 0 处理。
 
+`camera.timestamp_source` 决定能用哪几条：`auto` 按 1 → 2 → 3 顺序取；
+`device` 只允许 1、2，两者都不成立时 `stamp` 置零、`sync = kNoSync`（**不**回退
+主机时刻）；`host_receive` 直接取 3。
+
 `receive_stamp` 一律在 `get_frame` 返回后立刻取 `SteadyClock`，**不是**取帧后的
 `steady_clock::now()` 补写（`sp_vision_25` 的问题），因为拷贝前取点更接近 SDK 交付时刻。
 
 `tick_freq` 读不到时：`device_tick_frequency_hz = 0`、`device_time_ns = 0`，
-`sync` 至少降为 `kHostReceive`，绝不假装「设备时间可用」。
+此时路径 1、2 都无从计算（偏移没有设备时间可加），`auto` 降为 `kHostReceive`、
+`device` 降为 `kNoSync`，绝不假装「设备时间可用」。
+
+### 7.1 PTP 状态会重探测（审计 H26 附带项③）
+
+`GevIEEE1588Status` 与 `DeviceTicksFrequency` 在 `open()` 读一次是不够的：PTP
+从启动到收敛是秒级过程，开机那一瞬相机通常还在 `Master`/`FreeRun`，只读一次等于
+整场运行都拿不到 `kPtp`，所有帧只能退到「主机接收时刻」。
+
+现在取流线程在每次成功出帧后调用 `refresh_ptp_if_needed()`：只要当前
+`timestamp_config_` 还没拿到 PTP 基准（`ptp_slave == false` 或
+`tick_frequency_hz == 0`），就按 `kPtpProbeIntervalNs`（1 s）节流重读这两个节点；
+一旦读到 `Slave`（或补上了 tick 频率），就只更新这两个字段——
+`device_to_host_offset_ns`、`exposure_to_host_latency_ns`、`allow_unsynced_stamp`
+是 static 级配置，不会被一次探测重置。已经拿到 PTP 基准后不再探测。
+
+SDK 查询在 `tuning_mutex_` 之外做，更新在锁内做；`last_ptp_probe_ns_` 只由取流线程
+读写，`start_locked()` 每次启动清零，所以重新 start 后第一帧就会探测一次。
 
 ## 8. 错误映射
 

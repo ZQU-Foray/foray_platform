@@ -13,7 +13,12 @@ namespace foray::platform::hal {
  * @brief 一帧图像。
  *
  * `data` 指向 HAL 帧池中的预分配缓冲；生命周期由 `FrameLease` 保证。
- * `frame_id` 指向驱动配置中的字符串，驱动必须保证其生命周期长于帧。
+ *
+ * `frame_id` 是指向驱动内部存储的 `std::string_view`：**驱动必须保证该存储的
+ * 生命周期覆盖整条租约**，即从发布这一帧起到调用方释放租约为止都不能被释放或
+ * 改写。由此推论：`frame_id` 是打开期固定字段，`Camera::apply()` 不得热改它
+ * （热改会让在手的租约指向已释放/已改写的内存）。需要运行中变更帧标识的场合，
+ * 请重新打开设备。
  */
 struct ImageFrame {
     const std::uint8_t* data = nullptr;

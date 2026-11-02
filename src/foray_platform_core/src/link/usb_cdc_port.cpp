@@ -30,6 +30,12 @@ namespace foray::platform::link {
             close();
             return false;
         }
+        // 打开前设备侧（或上一次会话残留）躺在输入/输出缓冲里的字节一律丢弃：
+        // 它们不属于本次会话，留着会被上层当成协议帧解析（审计 H6）。
+        if (::tcflush(fd_, TCIOFLUSH) != 0) {
+            close();
+            return false;
+        }
         return true;
     }
     bool UsbCdcPort::is_open() const { return fd_ >= 0; }

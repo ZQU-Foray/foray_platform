@@ -51,13 +51,22 @@ class LidarImpl final : public hal::Lidar {
 
   private:
     Result<void> open_locked();
-    Result<void> start_locked();
     Result<void> stop_locked();
     Result<void> close_locked();
-    Result<void> recover_locked();
+    Result<void> prepare_recover_locked();
 
     Result<void> configure_locked();
-    bool wait_for_info_locked();
+    /// @brief 启动准备：校验状态与资源，取一份 `sink_` 快照留给锁外的设备上线等待。
+    ///
+    /// 已在 `kStreaming` 时返回成功且 @p sink 为空，调用方直接收工。
+    Result<void> prepare_start_locked(std::shared_ptr<CallbackSink>& sink);
+    /// @brief 启动收尾：设备已上线，绑定 handle、下发配置并拉起解析线程。
+    ///
+    /// 由调用方持 `control_mutex_` 调用。@p sink 必须仍是当前的 `sink_`，
+    /// 否则说明等待期间 `close()` 已经把资源换掉了（审计 H22）。
+    Result<void> finish_start_locked(const std::shared_ptr<CallbackSink>& sink);
+    /// @brief 等设备上报信息；**不持 `control_mutex_`**，因此最长 5 s 的等待不会卡住控制调用。
+    bool wait_for_info(const std::shared_ptr<CallbackSink>& sink);
     void update_sensor_info_locked();
 
     void parse_loop();
@@ -85,6 +94,12 @@ class LidarImpl final : public hal::Lidar {
     bool runtime_acquired_ = false;
 
     mutable std::mutex control_mutex_;
+    /// @brief 控制指令代次。每次公共控制调用（open/start/stop/close/recover）自增。
+    ///
+    /// `recover()` 把退避与设备上线等待搬到锁外，中途要有办法知道"别人动过状态机"，
+    /// 否则用户在这段时间 `close()` 之后，恢复线程还会自作主张把设备重新打开
+    /// （审计 H22）。只由持锁的控制调用修改，读时也在锁内。
+    std::uint64_t control_generation_ = 0;
     mutable std::mutex info_mutex_;
     hal::SensorInfo info_;
 
@@ -92,6 +107,10 @@ class LidarImpl final : public hal::Lidar {
     std::atomic<std::uint64_t> frames_delivered_{0};
     std::atomic<std::uint64_t> frames_dropped_{0};
     std::atomic<std::uint64_t> imu_dropped_{0};
+    /// @brief 由解析线程按 `udp_cnt` 缺口镜像过来的网络丢包数（审计 H23）。
+    std::atomic<std::uint64_t> udp_cnt_gaps_{0};
+    /// @brief 同上，`udp_cnt` 回退/大跳的次数（不算丢包）。
+    std::atomic<std::uint64_t> udp_cnt_anomalies_{0};
     std::atomic<std::uint64_t> timeouts_{0};
     std::atomic<std::uint64_t> sdk_errors_{0};
     std::atomic<std::uint64_t> reconnects_{0};

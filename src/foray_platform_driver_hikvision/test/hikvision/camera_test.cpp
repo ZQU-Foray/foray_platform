@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -97,6 +98,10 @@ struct Harness {
         // open() 以设备读回的分辨率为准，所以必须给 mock 配上。
         api->int_values[std::string(node::kWidth)] = 720;
         api->int_values[std::string(node::kHeight)] = 540;
+
+        // 设备开机默认手动曝光/增益：运行期写 ExposureTime / Gain 的前置条件（审计 H11）。
+        api->enum_values.emplace(std::string(node::kExposureAuto), "Off");
+        api->enum_values.emplace(std::string(node::kGainAuto), "Off");
 
         config.selector.serial = "DB0985207";
         config.width = 720;
@@ -343,6 +348,48 @@ TEST(HikvisionCamera, CloseDestroysHandleEvenWhenCloseFails) {
     EXPECT_EQ(harness.camera->state(), hal::DeviceState::kClosed);
 }
 
+/// @brief H10：异常回调注册失败必须让 open() 失败，并把已拿到的句柄还回去。
+TEST(HikvisionCamera, OpenFailsWhenExceptionRegistrationFails) {
+    Harness harness;
+    harness.api->register_exception_error = detail::mvs_error::kHandle;
+    harness.make();
+    ASSERT_NE(harness.camera, nullptr);
+
+    const auto status = harness.camera->open();
+
+    EXPECT_FALSE(status.ok());
+    // MV_E_HANDLE 经 mvs_error 映射为 kInternal，原始码保留在 vendor_code 里。
+    EXPECT_EQ(status.error().code, ErrorCode::kInternal);
+    EXPECT_EQ(status.error().vendor_code, static_cast<std::int32_t>(detail::mvs_error::kHandle));
+    EXPECT_NE(status.error().message.find("MV_CC_RegisterExceptionCallBack"), std::string::npos);
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kClosed);
+    EXPECT_EQ(harness.api->register_exception_calls.load(), 1);
+    // 失败路径必须销毁句柄，不能留下悬挂设备。
+    EXPECT_EQ(harness.api->destroy_calls.load(), 1);
+}
+
+/// @brief H10：close() 期间 SDK 线程仍在触发异常回调，不得崩溃或读已释放内存。
+TEST(HikvisionCamera, CloseToleratesConcurrentExceptionCallback) {
+    Harness harness;
+    harness.stream_ok();
+
+    std::atomic<bool> stop{false};
+    std::thread firing([&harness, &stop] {
+        while (!stop.load(std::memory_order_acquire)) {
+            harness.api->fire_exception(detail::mvs_error::kUdpRecvData);
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+    });
+
+    const auto status = harness.camera->close();
+    stop.store(true, std::memory_order_release);
+    firing.join();
+
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kClosed);
+    EXPECT_EQ(harness.api->destroy_calls.load(), 1);
+}
+
 /// @brief close() 幂等，不得重复销毁句柄。
 TEST(HikvisionCamera, CloseIsIdempotent) {
     Harness harness;
@@ -390,6 +437,47 @@ TEST(HikvisionCamera, RecoverReopensAndRestreams) {
     ASSERT_TRUE(status.ok()) << status.error().message;
     EXPECT_EQ(harness.camera->state(), hal::DeviceState::kStreaming);
     EXPECT_GE(harness.camera->stats().reconnects, 1U);
+}
+
+/**
+ * @brief 审计 H15：`recover()` 不许把 `sequence_` 与会话统计清零。
+ *
+ * 改前 `recover()` 复用 `open_locked()`，而 `open_locked()` 里顺手把 `sequence_`、
+ * `frames_received_`、`timeouts_` 等全部归零：自动恢复一次之后，消费者看到 sequence
+ * 从 3 掉回 1（断帧/乱序判定直接失效），统计看起来像"从没收到过帧"——现场只能看到
+ * `reconnects` 涨了，于是"掉线过，但一帧没丢"。
+ *
+ * 现在清零只在用户主动 `open()` 时发生（`reset_session_counters_locked()`），
+ * 恢复后计数器接着往上走。
+ */
+TEST(HikvisionCamera, RecoverKeepsSequenceAndSessionCounters) {
+    Harness harness;
+    harness.stream_ok();
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    for (std::uint32_t index = 1; index <= 3; ++index) {
+        harness.api->push_frame(make_frame(mono8_frame_info(index)));
+        ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok()) << "第 " << index << " 帧";
+        ASSERT_EQ(lease->sequence, index);
+    }
+    const auto before = harness.camera->stats();
+    ASSERT_EQ(before.frames_received, 3U);
+    ASSERT_EQ(before.last_sequence, 3U);
+
+    harness.api->fire_exception(detail::mvs_error::kUdpRecvData);
+    ASSERT_TRUE(wait_for_state(*harness.camera, hal::DeviceState::kError));
+    ASSERT_TRUE(harness.camera->recover().ok());
+
+    const auto after = harness.camera->stats();
+    EXPECT_GE(after.reconnects, 1U);
+    EXPECT_EQ(after.frames_received, before.frames_received);
+    EXPECT_EQ(after.last_sequence, before.last_sequence);
+    EXPECT_GE(after.timeouts, before.timeouts);
+
+    // 序号续着走，不回退。
+    harness.api->push_frame(make_frame(mono8_frame_info(4)));
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+    EXPECT_EQ(lease->sequence, 4U);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,6 +535,71 @@ TEST(HikvisionCamera, FrameCarriesTiming) {
     EXPECT_FALSE(frame.receive_stamp.is_zero());
 }
 
+/**
+ * @brief 审计 H26 附带项③：PTP 在 open() 之后才收敛，状态必须能被重新读到。
+ *
+ * 改前 `GevIEEE1588Status` / `DeviceTicksFrequency` 只在 `open()` 读一次：开机的
+ * 那一瞬相机还在 `Master`，于是整场运行都拿不到 `kPtp`，所有帧只能退到
+ * 「主机接收时刻」——明明 PTP 后来同步上了，时间戳精度却一直是最差的那档。
+ */
+TEST(HikvisionCamera, PtpSlaveDetectedMidStreamUpgradesTiming) {
+    Harness harness;
+    harness.api->enum_values[std::string(node::kPtpStatus)] = "Master";
+    harness.api->int_values[std::string(node::kDeviceTicksFrequency)] = 1000000000;
+    harness.stream_ok();
+
+    detail::FrameInfoView info = mono8_frame_info();
+    info.device_ticks = 5000000000ULL; // 5 s（1 GHz tick）
+    harness.api->push_frame(make_frame(info));
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok()) << "首帧读取超时";
+    EXPECT_EQ(lease->sync, hal::TimestampSync::kHostReceive);
+
+    // PTP 收敛：设备侧状态变成 Slave。取流线程要在一个探测周期内读到它。
+    harness.api->enum_values[std::string(node::kPtpStatus)] = "Slave";
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+    detail::FrameInfoView info2 = mono8_frame_info(2);
+    info2.device_ticks = 6000000000ULL; // 6 s
+    harness.api->push_frame(make_frame(info2));
+
+    hal::FrameLease<hal::ImageFrame> lease2;
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease2).ok()) << "第二帧读取超时";
+    EXPECT_EQ(lease2->sync, hal::TimestampSync::kPtp);
+    EXPECT_EQ(lease2->device_time_ns, 6000000000LL);
+    EXPECT_EQ(lease2->stamp.nanoseconds_since_epoch(), 6000000000LL);
+}
+
+/**
+ * @brief 审计 H9：`frame_id` 打开期固定，`apply()` 必须整包拒绝而不是悄悄忽略。
+ *
+ * 已交付租约的 `ImageFrame::frame_id` 是指向 `frame_id_` 存储的 `string_view`，
+ * 热改会让在手的租约变成悬垂视图。这条用例同时守住两件事：`apply()` 返回
+ * `kNotSupported`，以及旧租约的 id 读数仍然有效、内容未变（ASan 下即 UAF 检查）。
+ */
+TEST(HikvisionCamera, ApplyRejectsFrameIdChange) {
+    Harness harness;
+    harness.stream_ok();
+    harness.api->push_frame(make_frame(mono8_frame_info()));
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+    const std::string stable_id(lease->frame_id);
+    ASSERT_EQ(stable_id, harness.config.frame_id);
+
+    hal::CameraTuning tuning;
+    tuning.frame_id = std::string("changed_by_apply");
+    const auto status = harness.camera->apply(tuning);
+
+    ASSERT_FALSE(status.ok()) << "apply() 必须拒绝热改 frame_id";
+    EXPECT_EQ(status.error().code, ErrorCode::kNotSupported);
+    // 整包拒绝：相机状态与帧标识都不受影响。
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kStreaming);
+    EXPECT_EQ(lease->frame_id, stable_id);
+    EXPECT_EQ(harness.camera->info().frame_id, stable_id);
+}
+
 /// @brief 没有帧时 read() 超时，并累计 timeouts。
 TEST(HikvisionCamera, ReadTimesOutAndCounts) {
     Harness harness;
@@ -483,6 +636,44 @@ TEST(HikvisionCamera, RejectsUndersizedFrame) {
     // 合法帧到达后仍能正常读取，说明丢弃没有破坏状态机。
     harness.api->push_frame(make_frame(mono8_frame_info()));
     ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+}
+
+/**
+ * @brief 审计 H14：帧几何与帧池不一致时必须整帧拒绝，不能截断后仍宣告新尺寸。
+ *
+ * 改前只校验 `frame_length >= width*height`，然后 `copy = min(frame_length,
+ * payload_size)`：设备换几何（固件 ROI 对齐修正、恢复 user set、在线改分辨率）后
+ * 帧变大时只拷槽位容量，`out.width/height/stride` 却写的是新值——消费者按
+ * `data + y*stride` 逐行读会越过槽位缓冲，而且这帧不进任何丢帧计数器。
+ *
+ * 现在几何不一致直接 `sdk_errors_++` + `frames_dropped_++` 丢弃，一帧都不发布。
+ */
+TEST(HikvisionCamera, RejectsFrameGeometryChangeInsteadOfTruncating) {
+    Harness harness;
+    harness.stream_ok();
+
+    // 池按 720×540 分配；这帧报 721×540，比槽位大一行像素。
+    auto info = mono8_frame_info();
+    info.width = 721U;
+    info.height = 540U;
+    info.frame_length = 721U * 540U;
+    harness.api->push_frame(make_frame(info));
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    const auto status = harness.camera->read(lease, time::Duration::from_milliseconds(60));
+
+    EXPECT_FALSE(status.ok());
+    EXPECT_FALSE(static_cast<bool>(lease));
+    EXPECT_GE(harness.camera->stats().sdk_errors, 1U);
+    EXPECT_GE(harness.camera->stats().frames_dropped, 1U);
+    EXPECT_EQ(harness.camera->stats().frames_received, 0U);
+
+    // 几何恢复一致的帧照样能读，说明拒绝没有破坏状态机。
+    harness.api->push_frame(make_frame(mono8_frame_info(2)));
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok());
+    EXPECT_EQ(lease->width, 720U);
+    EXPECT_EQ(lease->height, 540U);
+    EXPECT_EQ(lease->size, 720U * 540U);
 }
 
 /// @brief 非 8 位格式的帧必须拒绝，不能靠调用方猜布局。
@@ -542,6 +733,19 @@ TEST(HikvisionCamera, SetExposureDelegatesToApply) {
 
     ASSERT_TRUE(status.ok()) << status.error().message;
     EXPECT_TRUE(harness.api->last_write(node::kExposureTime).has_value());
+}
+
+/// @brief 自动曝光下 `set_exposure()` 必须失败并说清原因（审计 H11）。
+TEST(HikvisionCamera, SetExposureRejectedWhileAuto) {
+    Harness harness;
+    harness.open_ok();
+    harness.api->enum_values[std::string(node::kExposureAuto)] = "Continuous";
+
+    const auto status = harness.camera->set_exposure(2500.0);
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kNotSupported);
+    EXPECT_FALSE(harness.api->last_write(node::kExposureTime).has_value());
 }
 
 /// @brief 段落级失败要保留 MVS 原始码，便于现场定位。
@@ -625,6 +829,61 @@ TEST(HikvisionCamera, ConsecutiveGrabErrorsMarkError) {
 
     EXPECT_TRUE(wait_for_state(*harness.camera, hal::DeviceState::kError));
     EXPECT_GE(harness.camera->stats().sdk_errors, 5U);
+}
+
+/**
+ * @brief 审计 H13：自由运行时「一直没数据」必须判成停摆，而不是永远静默等待。
+ *
+ * 改前的实现把 `MV_E_NODATA` 与超时一起当正常控制流 `continue`，相机会一直停在
+ * `kStreaming`、`read()` 永远返回 `kTimeout`，上层没有任何线索去调 `recover()`。
+ * 现在连续 `kMaxConsecutiveStarvations`（25 次，对应真实设备约 2.5 s）没数据即置
+ * `kError`，`read()` 随之返回 `kNotOpen` 并把当前状态带出来。
+ */
+TEST(HikvisionCamera, FreeRunStarvationMarksError) {
+    Harness harness;
+    harness.stream_ok();
+
+    EXPECT_TRUE(
+        wait_for_state(*harness.camera, hal::DeviceState::kError, std::chrono::milliseconds(3000)));
+    EXPECT_GE(harness.camera->stats().timeouts, 1U);
+    EXPECT_GE(harness.camera->stats().sdk_errors, 1U);
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    const auto status = harness.camera->read(lease, time::Duration::from_milliseconds(10));
+
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error().code, ErrorCode::kNotOpen);
+}
+
+/// @brief 触发模式下等触发是正常状态：同样没数据，但不能判成停摆。
+TEST(HikvisionCamera, TriggerModeDoesNotTreatSilenceAsStall) {
+    Harness harness;
+    harness.config.trigger.mode = hal::TriggerMode::kSoftware;
+    harness.stream_ok();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_EQ(harness.camera->state(), hal::DeviceState::kStreaming);
+    EXPECT_GE(harness.camera->stats().timeouts, 1U);
+    EXPECT_EQ(harness.camera->stats().sdk_errors, 0U);
+}
+
+/**
+ * @brief `MV_E_GC_TIMEOUT` 是真实故障，即使处在等触发的模式也必须计入失败。
+ *
+ * 改前它与 `MV_E_NODATA` 混在同一个 `continue` 分支里，GenICam 控制通道超时被当成
+ * 「这次没数据」，链路坏掉也不会进 `kError`（审计 H13）。
+ */
+TEST(HikvisionCamera, GenicamTimeoutIsAnSdkErrorOnEveryPath) {
+    Harness harness;
+    harness.config.trigger.mode = hal::TriggerMode::kSoftware;
+    harness.api->frame_error = detail::mvs_error::kGcTimeout;
+    harness.stream_ok();
+
+    EXPECT_TRUE(wait_for_state(*harness.camera, hal::DeviceState::kError));
+    EXPECT_GE(harness.camera->stats().sdk_errors, 5U);
+    EXPECT_EQ(static_cast<std::uint32_t>(harness.camera->stats().last_error_vendor_code),
+              detail::mvs_error::kGcTimeout);
 }
 
 /// @brief `supported_keys()` 必须声明驱动认识的键，供配置期自检。

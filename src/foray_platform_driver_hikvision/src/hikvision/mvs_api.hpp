@@ -98,8 +98,17 @@ class MvsApi {
 
     virtual Result<void> close_device(void* handle) = 0;
 
-    virtual void register_exception(void* handle, ExceptionCallback callback,
-                                    void* user) = 0;
+    /**
+     * @brief 注册 SDK 异常回调。
+     *
+     * 失败必须上报（审计 H10）：旧实现丢弃 `MV_CC_RegisterExceptionCallBack` 的返回值，
+     * 现场表现为"相机在用、但掉线永远不自愈"，且没有任何日志。
+     *
+     * 回调在 SDK 内部线程上触发，可能一直持续到 `destroy_handle(handle)` 返回为止；
+     * 因此实现方必须保证回调桥的存储活得比句柄久，而不是反过来。
+     */
+    virtual Result<void> register_exception(void* handle, ExceptionCallback callback,
+                                            void* user) = 0;
 
     virtual Result<void> set_int(void* handle, std::string_view node,
                                 std::int64_t value) = 0;

@@ -538,6 +538,7 @@ int main(int argc, char** argv) {
             std::cerr << "读取第 " << frame_index << " 帧失败: " << read.error().message << '\n'
                       << "stats: packets=" << stats.packets_received
                       << " packets_dropped=" << stats.packets_dropped
+                      << " packets_lost=" << stats.packets_lost
                       << " frames_received=" << stats.frames_received
                       << " frames_dropped=" << stats.frames_dropped
                       << " timeouts=" << stats.timeouts << '\n';
@@ -598,6 +599,7 @@ int main(int argc, char** argv) {
                   << bytes_per_second / 1'000'000.0 << std::defaultfloat << '\n'
                   << "stats: packets=" << stats.packets_received
                   << " packets_dropped=" << stats.packets_dropped
+                  << " packets_lost=" << stats.packets_lost
                   << " frames_received=" << stats.frames_received
                   << " frames_dropped=" << stats.frames_dropped
                   << " timeouts=" << stats.timeouts << '\n';
@@ -630,6 +632,7 @@ int main(int argc, char** argv) {
               << "PPM: " << ppm_path << (ppm_ok ? " (ok)" : " (失败)") << '\n'
               << "packets=" << stats.packets_received
               << " packets_dropped=" << stats.packets_dropped
+              << " packets_lost=" << stats.packets_lost
               << " frames_received=" << stats.frames_received << '\n';
 
     if (!pcd_ok || !ppm_ok) {
