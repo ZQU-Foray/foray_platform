@@ -42,18 +42,22 @@ struct TriggerConfig {
 struct CameraConfig {
     DeviceSelector selector;
 
-    /// @brief 0 表示使用设备当前值。
+    /// @brief 0 表示使用设备当前值（0 分辨率本身非法，不能当"显式归零"用）。
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    std::uint32_t offset_x = 0;
-    std::uint32_t offset_y = 0;
 
-    /// @brief 0 表示不改设备值（设备通常为 1）。
-    std::uint32_t binning_horizontal = 0;
-    std::uint32_t binning_vertical = 0;
-    /// @brief 0 表示不改设备值（设备通常为 1）。
-    std::uint32_t decimation_horizontal = 0;
-    std::uint32_t decimation_vertical = 0;
+    /// @brief 未设置 = 保留设备当前值；显式 0 = 把设备 ROI 原点归零（审计 H26 附带项）。
+    ///
+    /// 用 `std::optional` 而不是"0 表示不改"，是因为 `0` 本身就是合法且必要的取值：
+    /// 设备上残留的旧 ROI 只能靠显式写 0 清掉，若把 0 当"未设置"，旧 ROI 会被静默沿用。
+    std::optional<std::uint32_t> offset_x;
+    std::optional<std::uint32_t> offset_y;
+
+    /// @brief 未设置 = 保留设备值（设备通常为 1）；显式 0 由设备按非法值拒绝，本仓不猜。
+    std::optional<std::uint32_t> binning_horizontal;
+    std::optional<std::uint32_t> binning_vertical;
+    std::optional<std::uint32_t> decimation_horizontal;
+    std::optional<std::uint32_t> decimation_vertical;
 
     PixelFormat pixel_format = PixelFormat::kBayerRG8;
 

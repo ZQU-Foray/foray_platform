@@ -57,16 +57,22 @@ hal::Camera（含 apply(CameraTuning)）  ← 运行期热改入口
 |---|---|---|---|
 | `camera.width` | int | `0`（设备当前值） | `Width` |
 | `camera.height` | int | `0` | `Height` |
-| `camera.offset_x` | int | `0` | `OffsetX` |
-| `camera.offset_y` | int | `0` | `OffsetY` |
-| `camera.binning_horizontal` | int | `1` | `BinningHorizontal` |
-| `camera.binning_vertical` | int | `1` | `BinningVertical` |
-| `camera.decimation_horizontal` | int | `1` | `DecimationHorizontal` |
-| `camera.decimation_vertical` | int | `1` | `DecimationVertical` |
+| `camera.offset_x` | int ≥ -1 | `-1`（未设置） | `OffsetX` |
+| `camera.offset_y` | int ≥ -1 | `-1` | `OffsetY` |
+| `camera.binning_horizontal` | int ≥ -1 | `-1` | `BinningHorizontal` |
+| `camera.binning_vertical` | int ≥ -1 | `-1` | `BinningVertical` |
+| `camera.decimation_horizontal` | int ≥ -1 | `-1` | `DecimationHorizontal` |
+| `camera.decimation_vertical` | int ≥ -1 | `-1` | `DecimationVertical` |
 | `camera.pixel_format` | enum | `bayer_rg8` | `PixelFormat` |
 
 `width/height` 为 0 表示沿用设备当前值；组合约束（`offset + size ≤ 传感器范围`）
 由驱动在写入时按设备实际能力校验，**不**在 schema 里硬编码传感器尺寸。
+
+`offset_*/binning_*/decimation_*` 用 `-1` 表示**未设置**（保留设备当前值），
+`0` 是**显式取值**：ROI 原点写 0 会把设备上残留的旧偏移清掉，这正是审计 H26
+附带项要保住的用法——所以这几项不能用「0 即未设置」的约定。binning/decimation
+写 0 在设备侧通常是非法值，此时透传并由设备的 `MV_E_GC_RANGE` 显式失败，本仓
+不替设备猜一个默认值。
 
 `pixel_format` 枚举：`mono8`、`bayer_rg8`、`bayer_gr8`、`bayer_gb8`、`bayer_bg8`、
 `mono10`、`mono12`、`bayer_rg10`、`bayer_rg12`、`rgb8`、`bgr8`、`yuv422`。

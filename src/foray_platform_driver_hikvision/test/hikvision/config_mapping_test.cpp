@@ -87,12 +87,12 @@ TEST(HikvisionConfigMapping, GeometryWritesRoiAndSampling) {
     hal::CameraConfig config;
     config.width = 640;
     config.height = 480;
-    config.offset_x = 8;
-    config.offset_y = 16;
-    config.binning_horizontal = 2;
-    config.binning_vertical = 4;
-    config.decimation_horizontal = 2;
-    config.decimation_vertical = 3;
+    config.offset_x = 8U;
+    config.offset_y = 16U;
+    config.binning_horizontal = 2U;
+    config.binning_vertical = 4U;
+    config.decimation_horizontal = 2U;
+    config.decimation_vertical = 3U;
 
     ASSERT_TRUE(fixture.apply(config).ok());
     EXPECT_TRUE(fixture.wrote(node::kOffsetX, "8"));
@@ -101,6 +101,25 @@ TEST(HikvisionConfigMapping, GeometryWritesRoiAndSampling) {
     EXPECT_TRUE(fixture.wrote(node::kBinningVertical, "4"));
     EXPECT_TRUE(fixture.wrote(node::kDecimationHorizontal, "2"));
     EXPECT_TRUE(fixture.wrote(node::kDecimationVertical, "3"));
+}
+
+/**
+ * @brief 审计 H26 附带项：ROI 原点的 0 是合法配置，必须真的下发。
+ *
+ * 改前 `offset_x/offset_y` 是 `std::uint32_t` 且 `0` 被 `set_int_if_set` 当成
+ * 「未设置」直接跳过——设备上残留的旧 ROI 因此永远清不掉，只能靠手动改设备。
+ */
+TEST(HikvisionConfigMapping, GeometryWritesExplicitZeroRoi) {
+    MappingFixture fixture;
+    hal::CameraConfig config;
+    config.width = 640;
+    config.height = 480;
+    config.offset_x = 0U;
+    config.offset_y = 0U;
+
+    ASSERT_TRUE(fixture.apply(config).ok());
+    EXPECT_TRUE(fixture.wrote(node::kOffsetX, "0"));
+    EXPECT_TRUE(fixture.wrote(node::kOffsetY, "0"));
 }
 
 /// @brief 所有 8 位格式都要映射到 MVS 枚举名。

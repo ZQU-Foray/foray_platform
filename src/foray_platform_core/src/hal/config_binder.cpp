@@ -216,18 +216,21 @@ param::ParamSchema make_camera_param_schema() {
     height.hot_reloadable = false;
     add(schema, std::move(height));
 
+    // -1 表示"未配置"：0 是合法的 ROI 原点，必须能和"不改设备值"区分开（审计 H26 附带项）。
     param::ParamSpec offset_x =
-        make_spec("camera.offset_x", param::ParamType::kInt, param::ParamValue(0));
-    offset_x.minimum = param::ParamValue(0);
+        make_spec("camera.offset_x", param::ParamType::kInt, param::ParamValue(-1));
+    offset_x.minimum = param::ParamValue(-1);
     offset_x.maximum = param::ParamValue(65535);
     offset_x.hot_reloadable = false;
+    offset_x.description = "ROI 原点 X；-1 表示未设置（保留设备值），0 表示显式归零";
     add(schema, std::move(offset_x));
 
     param::ParamSpec offset_y =
-        make_spec("camera.offset_y", param::ParamType::kInt, param::ParamValue(0));
-    offset_y.minimum = param::ParamValue(0);
+        make_spec("camera.offset_y", param::ParamType::kInt, param::ParamValue(-1));
+    offset_y.minimum = param::ParamValue(-1);
     offset_y.maximum = param::ParamValue(65535);
     offset_y.hot_reloadable = false;
+    offset_y.description = "ROI 原点 Y；-1 表示未设置（保留设备值），0 表示显式归零";
     add(schema, std::move(offset_y));
 
     param::ParamSpec format = make_spec("camera.pixel_format", param::ParamType::kString,
@@ -293,33 +296,35 @@ param::ParamSchema make_camera_param_schema() {
     add(schema, std::move(unsynced));
 
     param::ParamSpec binning_h =
-        make_spec("camera.binning_horizontal", param::ParamType::kInt, param::ParamValue(0));
-    binning_h.minimum = param::ParamValue(0);
+        make_spec("camera.binning_horizontal", param::ParamType::kInt, param::ParamValue(-1));
+    binning_h.minimum = param::ParamValue(-1);
     binning_h.maximum = param::ParamValue(64);
     binning_h.hot_reloadable = false;
-    binning_h.description = "水平合并；0 表示不改设备值";
+    binning_h.description = "水平合并；-1 表示未设置（保留设备值）";
     add(schema, std::move(binning_h));
 
     param::ParamSpec binning_v =
-        make_spec("camera.binning_vertical", param::ParamType::kInt, param::ParamValue(0));
-    binning_v.minimum = param::ParamValue(0);
+        make_spec("camera.binning_vertical", param::ParamType::kInt, param::ParamValue(-1));
+    binning_v.minimum = param::ParamValue(-1);
     binning_v.maximum = param::ParamValue(64);
     binning_v.hot_reloadable = false;
+    binning_v.description = "垂直合并；-1 表示未设置（保留设备值）";
     add(schema, std::move(binning_v));
 
     param::ParamSpec decimation_h =
-        make_spec("camera.decimation_horizontal", param::ParamType::kInt, param::ParamValue(0));
-    decimation_h.minimum = param::ParamValue(0);
+        make_spec("camera.decimation_horizontal", param::ParamType::kInt, param::ParamValue(-1));
+    decimation_h.minimum = param::ParamValue(-1);
     decimation_h.maximum = param::ParamValue(64);
     decimation_h.hot_reloadable = false;
-    decimation_h.description = "水平抽点；0 表示不改设备值";
+    decimation_h.description = "水平抽点；-1 表示未设置（保留设备值）";
     add(schema, std::move(decimation_h));
 
     param::ParamSpec decimation_v =
-        make_spec("camera.decimation_vertical", param::ParamType::kInt, param::ParamValue(0));
-    decimation_v.minimum = param::ParamValue(0);
+        make_spec("camera.decimation_vertical", param::ParamType::kInt, param::ParamValue(-1));
+    decimation_v.minimum = param::ParamValue(-1);
     decimation_v.maximum = param::ParamValue(64);
     decimation_v.hot_reloadable = false;
+    decimation_v.description = "垂直抽点；-1 表示未设置（保留设备值）";
     add(schema, std::move(decimation_v));
 
     param::ParamSpec frame_rate_enable = make_spec(
@@ -597,12 +602,16 @@ Result<CameraConfig> bind_camera_config(const param::ParamSnapshot& snapshot) {
 
     const std::int64_t width = snapshot.get_int("camera.width", 0);
     const std::int64_t height = snapshot.get_int("camera.height", 0);
-    const std::int64_t offset_x = snapshot.get_int("camera.offset_x", 0);
-    const std::int64_t offset_y = snapshot.get_int("camera.offset_y", 0);
+    const std::int64_t offset_x = snapshot.get_int("camera.offset_x", -1);
+    const std::int64_t offset_y = snapshot.get_int("camera.offset_y", -1);
     config.width = static_cast<std::uint32_t>(width);
     config.height = static_cast<std::uint32_t>(height);
-    config.offset_x = static_cast<std::uint32_t>(offset_x);
-    config.offset_y = static_cast<std::uint32_t>(offset_y);
+    if (offset_x >= 0) {
+        config.offset_x = static_cast<std::uint32_t>(offset_x);
+    }
+    if (offset_y >= 0) {
+        config.offset_y = static_cast<std::uint32_t>(offset_y);
+    }
 
     const std::string format_text = snapshot.get_string("camera.pixel_format", "bayer_rgg8");
     const std::optional<PixelFormat> format = parse_pixel_format(format_text);
@@ -646,14 +655,17 @@ Result<CameraConfig> bind_camera_config(const param::ParamSnapshot& snapshot) {
     }
     config.trigger.activation = *activation;
 
-    config.binning_horizontal =
-        static_cast<std::uint32_t>(snapshot.get_int("camera.binning_horizontal", 0));
-    config.binning_vertical =
-        static_cast<std::uint32_t>(snapshot.get_int("camera.binning_vertical", 0));
-    config.decimation_horizontal =
-        static_cast<std::uint32_t>(snapshot.get_int("camera.decimation_horizontal", 0));
-    config.decimation_vertical =
-        static_cast<std::uint32_t>(snapshot.get_int("camera.decimation_vertical", 0));
+    const auto bind_sampling = [&snapshot](const char* name) -> std::optional<std::uint32_t> {
+        const std::int64_t value = snapshot.get_int(name, -1);
+        if (value < 0) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint32_t>(value);
+    };
+    config.binning_horizontal = bind_sampling("camera.binning_horizontal");
+    config.binning_vertical = bind_sampling("camera.binning_vertical");
+    config.decimation_horizontal = bind_sampling("camera.decimation_horizontal");
+    config.decimation_vertical = bind_sampling("camera.decimation_vertical");
 
     config.frame_rate_enable = snapshot.get_bool("camera.frame_rate_enable", true);
 

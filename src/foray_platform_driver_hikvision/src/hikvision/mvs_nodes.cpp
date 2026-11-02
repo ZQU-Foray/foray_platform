@@ -10,13 +10,26 @@ namespace foray::platform::driver::hikvision::detail {
 
 namespace {
 
-/// @brief 只在非 0 时下发：`0` 在 `CameraConfig` 里表示「保留设备当前值」。
+/// @brief 只在非 0 时下发：`width`/`height` 的 `0` 表示「保留设备当前值」。
 Result<void> set_int_if_set(MvsApi& api, void* handle, std::string_view node_name,
                             std::int64_t value) {
     if (value == 0) {
         return Result<void>();
     }
     return api.set_int(handle, node_name, value);
+}
+
+/// @brief 未设置才跳过；显式 0 必须下发（审计 H26 附带项）。
+///
+/// ROI 原点与 binning/decimation 的 `0` 是**合法配置**：设备上残留的旧 ROI 只能靠
+/// 显式写 0 清掉。所以这几项用 `std::optional` 区分「未配置」与「配置成 0」，
+/// 不能再用 `set_int_if_set` 那套「0 即未设置」的约定。
+Result<void> set_optional_int(MvsApi& api, void* handle, std::string_view node_name,
+                              const std::optional<std::uint32_t>& value) {
+    if (!value.has_value()) {
+        return Result<void>();
+    }
+    return api.set_int(handle, node_name, static_cast<std::int64_t>(*value));
 }
 
 Result<void> set_optional_float(MvsApi& api, void* handle, std::string_view node_name,
@@ -125,31 +138,32 @@ Result<void> apply_geometry(MvsApi& api, void* handle, const hal::CameraConfig& 
     if (auto status = set_int_if_set(api, handle, node::kHeight, config.height); !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kOffsetX, config.offset_x);
+    // ROI 原点与 binning/decimation：未设置才跳过，显式 0 必须下发（审计 H26 附带项）。
+    if (auto status = set_optional_int(api, handle, node::kOffsetX, config.offset_x);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kOffsetY, config.offset_y);
-        !status.ok()) {
-        return status;
-    }
-    if (auto status =
-            set_int_if_set(api, handle, node::kBinningHorizontal, config.binning_horizontal);
+    if (auto status = set_optional_int(api, handle, node::kOffsetY, config.offset_y);
         !status.ok()) {
         return status;
     }
     if (auto status =
-            set_int_if_set(api, handle, node::kBinningVertical, config.binning_vertical);
+            set_optional_int(api, handle, node::kBinningHorizontal, config.binning_horizontal);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kDecimationHorizontal,
-                                     config.decimation_horizontal);
+    if (auto status =
+            set_optional_int(api, handle, node::kBinningVertical, config.binning_vertical);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kDecimationVertical,
-                                     config.decimation_vertical);
+    if (auto status = set_optional_int(api, handle, node::kDecimationHorizontal,
+                                       config.decimation_horizontal);
+        !status.ok()) {
+        return status;
+    }
+    if (auto status =
+            set_optional_int(api, handle, node::kDecimationVertical, config.decimation_vertical);
         !status.ok()) {
         return status;
     }
