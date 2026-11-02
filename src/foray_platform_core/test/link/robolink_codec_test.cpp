@@ -233,6 +233,48 @@ TEST(RoboLinkCodec, HelloPayloadRoundTrips)
     EXPECT_EQ(decoded->max_frame_bytes, 512u);
 }
 
+// 审计 H3：主版本不符必须整包拒收——改前只校验 device_type 与帧上限，MCU 用
+// 别的协议版本发 HELLO 时会被当成合法握手，两端就跑在不同协议上。
+TEST(RoboLinkCodec, HelloRejectsUnknownMajorVersion)
+{
+    foray::platform::link::Hello hello;
+    const auto payload = foray::platform::link::encode_hello_payload(hello);
+
+    for (const std::uint8_t major : {std::uint8_t{1}, std::uint8_t{3}}) {
+        auto tampered = payload;
+        tampered[0] = major;
+        EXPECT_FALSE(foray::platform::link::decode_hello_payload(tampered.data(), tampered.size())
+                         .has_value())
+            << "major=" << static_cast<int>(major) << " 不该被当成合法 HELLO";
+    }
+
+    auto same_version = payload;
+    EXPECT_TRUE(
+        foray::platform::link::decode_hello_payload(same_version.data(), same_version.size())
+            .has_value());
+}
+
+// 审计 H3：周期为 0 不再被悄悄改写成 50 ms。改前返回 period=50 并握手成功，
+// 于是 MCU 说 0、主机按 50 判失联，两边窗口对不上。
+TEST(RoboLinkCodec, HelloDoesNotRewriteZeroHeartbeatPeriod)
+{
+    foray::platform::link::Hello hello;
+    auto payload = foray::platform::link::encode_hello_payload(hello);
+    ASSERT_EQ(payload.size(), 26u);
+
+    payload[18] = 0;
+    payload[19] = 0;
+    EXPECT_FALSE(
+        foray::platform::link::decode_hello_payload(payload.data(), payload.size()).has_value());
+
+    payload[18] = 0x20;
+    payload[19] = 0x00; // 32 ms，合法值必须原样返回
+    const auto decoded =
+        foray::platform::link::decode_hello_payload(payload.data(), payload.size());
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->heartbeat_period_ms, 32u);
+}
+
 TEST(RoboLinkCodec, HelloAckPayloadRoundTrips)
 {
     foray::platform::link::HelloAck ack;
