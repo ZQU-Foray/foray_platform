@@ -115,5 +115,37 @@ TEST(UsbCdcPort, OpensTerminalDeviceForFutureRawModeTest)
     EXPECT_TRUE(port.open());
 }
 
+// 审计 H6：设备在打开前就往串口写过东西（或上一次会话的残留），这些字节不属于
+// 本次会话；改前它们会躺在输入缓冲里被当成协议字节读走，可能凑出一个假帧。
+TEST(UsbCdcPort, OpenDiscardsBytesQueuedBeforeOpen)
+{
+    TestTerminal terminal;
+    ASSERT_TRUE(terminal.open());
+    termios settings{};
+    ASSERT_EQ(::tcgetattr(terminal.slave_fd, &settings), 0);
+    ::cfmakeraw(&settings);
+    ASSERT_EQ(::tcsetattr(terminal.slave_fd, TCSANOW, &settings), 0);
+
+    const std::uint8_t stale[] = {0xD3, 0x91, 0x08, 0x00};
+    ASSERT_EQ(::write(terminal.master_fd, stale, sizeof(stale)),
+              static_cast<ssize_t>(sizeof(stale)));
+
+    UsbCdcPort port(terminal.path);
+    ASSERT_TRUE(port.open());
+
+    std::uint8_t bytes[sizeof(stale)]{};
+    EXPECT_EQ(port.read_bytes(bytes, sizeof(bytes)), -1);
+    EXPECT_EQ(errno, EAGAIN);
+
+    // 打开之后写进来的字节必须照常读到，证明只丢了打开前的残留。
+    const std::uint8_t fresh[] = {0xAA, 0xBB};
+    ASSERT_EQ(::write(terminal.master_fd, fresh, sizeof(fresh)),
+              static_cast<ssize_t>(sizeof(fresh)));
+    std::uint8_t received[sizeof(fresh)]{};
+    EXPECT_EQ(port.read_bytes(received, sizeof(received)), static_cast<ssize_t>(sizeof(fresh)));
+    EXPECT_EQ(received[0], 0xAA);
+    EXPECT_EQ(received[1], 0xBB);
+}
+
 }  // namespace
 }  // namespace foray::platform::link
