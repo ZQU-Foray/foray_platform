@@ -1,6 +1,6 @@
 # Hikvision 驱动（foray_platform_driver_hikvision）接入与封装
 
-> 状态：**已落地（M7/M8，2026-10-24）**。`foray_platform_driver_hikvision/` 代码、
+> 状态：**已落地（M7/M8，2026-10-24）**。`src/foray_platform_driver_hikvision/` 代码、
 > 81 个 mock 单测与 MV-CS004-10GC 实机取流均已验证；§12 列出仍缺的 HAL 能力，
 > §13/§14 记录实机核对结果与未做的验证项。
 > 与 `hal_sensor_driver_research.md` §4 的关系：那里回答「海康 SDK 长什么样」，
@@ -28,7 +28,7 @@
 ## 2. 包结构
 
 ```text
-foray_platform_driver_hikvision/
+src/foray_platform_driver_hikvision/
 ├── CMakeLists.txt
 ├── package.xml
 ├── cmake/
@@ -54,7 +54,7 @@ foray_platform_driver_hikvision/
 │   ├── timestamp_test.cpp
 │   ├── mvs_error_test.cpp
 │   └── backend_test.cpp
-└── tools/
+└── apps/
     └── camera_dump.cpp            # 配置 + 取 N 帧 + 帧率/丢包统计（可选软触发循环）
 ```
 
@@ -509,7 +509,7 @@ MVS 侧可用信息：
 `foray_platform::hal::SensorStats` 全量计数；`--trigger-software` 走「先 trigger
 再 read」的软触发循环。
 
-`--view`（构建期 `find_package(SDL2 QUIET)` 找到 SDL2 才编译进 `tools/viewer.cpp`）
+`--view`（构建期 `find_package(SDL2 QUIET)` 找到 SDL2 才编译进 `apps/viewer.cpp`）
 再开一个 SDL2 窗口实时显示画面：8 位 Mono/Bayer 经块内插值转 RGB24 上传
 `SDL_Texture`，窗口可自由拉伸但**保持原始宽高比**（`SDL_RenderSetLogicalSize`，
 两侧自动留黑边——现场用这个窗口判断「视场对不对」时比例失真会直接导致误判）；
