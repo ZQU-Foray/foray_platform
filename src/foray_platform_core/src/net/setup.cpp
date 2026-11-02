@@ -223,6 +223,12 @@ Result<LinkReport> ensure_link(const NetIntent& intent, const Topology& topology
         } else if (action.operation == "add_ipv4") {
             result = backend.add_ipv4(action.target, *intent.host_ip, intent.prefix);
         } else if (action.operation == "remove_ipv4" && action.address.has_value()) {
+            // 地址一摘就查不到原配了，先把「谁被摘、为什么摘」写进报告再动手（审计 H7）。
+            report.warnings.push_back("移除 " + action.target + " 上的旧地址 " +
+                                      action.address->to_string() + "/" +
+                                      std::to_string(static_cast<int>(action.prefix)) +
+                                      "（与目标地址同网段，通常是换 IP 前的残留；同网段的其它"
+                                      "设备会暂时失联）");
             result = backend.remove_ipv4(action.target, *action.address, action.prefix);
         }
         if (!result.ok()) {

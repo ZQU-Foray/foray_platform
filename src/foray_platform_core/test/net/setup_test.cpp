@@ -367,3 +367,60 @@ TEST(SetupTest, ReplacesStaleAddressInSameSubnet) {
     EXPECT_EQ(backend.calls[0], "remove_ipv4 br-lidar 192.168.1.99/24");
     EXPECT_EQ(backend.calls[1], "add_ipv4 br-lidar 192.168.1.51/24");
 }
+
+namespace foray::platform::net {
+namespace {
+
+/// 桥上带一个同网段旧地址（换过 IP 的现场），物理口已挂好：只剩摘旧 + 配新两步。
+Topology topology_with_old_address() {
+    Topology topology;
+    InterfaceInfo bridge = make_iface("br-lidar", LinkRole::kBridge, true, true);
+    bridge.addresses.emplace_back(ip_of("192.168.1.99"), 24);
+    InterfaceInfo port = make_iface("eth0", LinkRole::kEthernet, true, true, "br-lidar");
+    topology.interfaces = {bridge, port};
+    return topology;
+}
+
+NetIntent intent_with_host_ip() {
+    return NetIntent{"eth0", "br-lidar", ip_of("192.168.1.51"), 24, std::nullopt, false};
+}
+
+// 审计 H7：自动摘掉的旧地址一摘就没了，报告里必须先留下「摘了谁」，
+// 否则现场只看到设备连不上，查不到这台机器原来配的是哪个地址。
+TEST(NetSetup, OldAddressRemovalIsRecordedInWarnings)
+{
+    foray::platform::net::Topology topology = topology_with_old_address();
+    foray::platform::net::NetIntent intent = intent_with_host_ip();
+
+    foray::platform::net::FakeBackend backend;
+    const auto report = foray::platform::net::ensure_link(intent, topology, backend, false);
+    ASSERT_TRUE(report.ok()) << report.error().message;
+
+    bool recorded = false;
+    for (const auto& warning : report.value().warnings) {
+        if (warning.find("旧地址") != std::string::npos &&
+            warning.find("192.168.1.99/24") != std::string::npos) {
+            recorded = true;
+        }
+    }
+    EXPECT_TRUE(recorded) << "报告里没有记录被移除的旧地址";
+}
+
+// 摘地址失败时，那条留痕必须已经在报告最前面：它记的是「曾经想摘什么」，
+// 不能因为失败与回滚说明把它挤掉或干脆没写。
+TEST(NetSetup, OldAddressRemovalOutlivesFailure)
+{
+    foray::platform::net::Topology topology = topology_with_old_address();
+    foray::platform::net::NetIntent intent = intent_with_host_ip();
+
+    foray::platform::net::FakeBackend backend;
+    backend.fail_prefix = "remove_ipv4";
+    const auto report = foray::platform::net::ensure_link(intent, topology, backend, false);
+    ASSERT_TRUE(report.ok()) << report.error().message;
+    EXPECT_FALSE(report.value().ok);
+    ASSERT_FALSE(report.value().warnings.empty());
+    EXPECT_NE(report.value().warnings.front().find("192.168.1.99/24"), std::string::npos);
+}
+
+} // namespace
+} // namespace foray::platform::net
