@@ -132,7 +132,23 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 > `kOffset*` 常量），`rsvd` 与 `crc32` 既不读也不校验；照这张表二次开发时不要以为它们是
 > 载荷的一部分。
 
-点转换：
+### 4.1 设备自报 `length` 的可信边界（审计 H26）
+
+`PacketView::size` 直接取自 SDK 结构体的 `length` 字段，是**设备自报**的「头 + 载荷」总长，
+不是本仓算出来的缓冲区大小。把它当源缓冲长度用是一条**显式契约**：
+
+- 前提：SDK 保证「回调期间 `data` 指向完整包」。这条保证不在本仓可验证范围内
+  （`FORAY_BUILD_DRIVER_LIVOX=OFF` 时连 SDK 结构体布局都编译不进来），所以它是一句
+  外部依赖声明，而不是本仓的实测结论；
+- 因此消费方必须各自再设上界，不许直接拿 `size` 做 `memcpy` 长度或数组下标。当前三道：
+  1. `CallbackSink::push()`：拒绝 `size < 36` 或 `size > max_packet_bytes`（默认 1500，
+     上限 `kMaxPacketBytes`），只有通过者才 `memcpy` 进定长 `PacketSlot::data`；
+  2. `parse_header()`：要求 `length >= 36` 且 `length <= size`；
+  3. `parse_points()`：要求 `dot_num × stride <= length - 36`。
+- 回归保护：`CallbackSinkTest.RejectsSizeOutsideHeaderAndCapacity` 钉住第 1 道闸门
+  （含「正好等于容量上限必须收下」这条边界）。
+
+### 4.2 点转换
 
 - 高精度 `int32 mm` → m；低精度 `int16 cm` → m；
 - 球坐标：`depth` mm、`theta/phi` 0.01°；`x = d·cosθ·cosφ`，`y = d·sinθ·cosφ`，`z = d·sinφ`；

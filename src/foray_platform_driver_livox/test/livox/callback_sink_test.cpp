@@ -143,4 +143,39 @@ TEST(CallbackSinkTest, SelectorStringsSurviveConcurrentWritersAndReaders) {
     EXPECT_FALSE(sink->selector_matches("SN999", "10.0.0.1"));
 }
 
+// 审计 H26：`PacketView::size` 是设备自报长度，`push()` 是把它当源缓冲长度用的第一道
+// 闸门——低于固定头或超过 `max_packet_bytes` 一律丢弃并计数，绝不 memcpy。
+TEST(CallbackSinkTest, RejectsSizeOutsideHeaderAndCapacity) {
+    auto queue = std::make_shared<container::SpscQueue<PacketSlot>>(16);
+    auto sink = std::make_shared<CallbackSink>();
+    sink->handle.store(7U);
+    sink->queue = queue;
+
+    std::array<std::uint8_t, 2000> buffer{};
+    buffer.fill(0x11U);
+    PacketView view;
+    view.handle = 7U;
+    view.dev_type = 0x01U;
+    view.data = buffer.data();
+
+    view.size = static_cast<std::uint32_t>(kPacketHeaderBytes) - 1U; // 比固定头还短
+    sink->push(view);
+    view.size = static_cast<std::uint32_t>(sink->max_packet_bytes) + 1U; // 超过槽位容量
+    sink->push(view);
+    view.size = 0;
+    sink->push(view);
+
+    EXPECT_EQ(sink->packets_dropped.load(), 3U);
+    EXPECT_EQ(queue->dropped(), 0U);
+
+    // 正好等于容量上限的包必须收下：闸门是 `>` 而不是 `>=`。
+    view.size = static_cast<std::uint32_t>(sink->max_packet_bytes);
+    sink->push(view);
+    EXPECT_EQ(sink->packets_dropped.load(), 3U);
+    EXPECT_EQ(sink->packets_received.load(), 1U);
+    PacketSlot slot;
+    EXPECT_TRUE(queue->try_pop(slot));
+    EXPECT_EQ(slot.length, static_cast<std::uint16_t>(kMaxPacketBytes));
+}
+
 } // namespace foray::platform::driver::livox::detail

@@ -31,7 +31,11 @@ void point_cloud_trampoline(const std::uint32_t handle, const std::uint8_t dev_t
     view.handle = handle;
     view.dev_type = dev_type;
     view.data = reinterpret_cast<const std::uint8_t*>(data);
-    // SDK 保证回调期间 `data` 指向完整包；`length` 是头 + 载荷的总长度。
+    // 审计 H26（契约依赖）：这里的 `size` 是**设备自报**的头 + 载荷总长，不是本仓算出来的
+    // 缓冲区大小。把它当源缓冲长度用，前提是 SDK 保证「回调期间 `data` 指向完整包」——
+    // 这条保证在本仓不可验证（见 livox_api.hpp 的 PacketView 契约注释），所以下游
+    // `CallbackSink::push()` 仍会按 `max_packet_bytes` 截断后才 memcpy，`parse_header()`
+    // 与 `parse_points()` 再各自校验 `length <= size` 与 `dot_num × stride`。
     view.size = data->length;
     g_point_callback(g_point_user, view);
 }
