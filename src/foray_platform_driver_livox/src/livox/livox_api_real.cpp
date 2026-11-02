@@ -1,9 +1,9 @@
 #include "livox/livox_api.hpp"
+#include "livox/tlv_scan.hpp"
 
 #include <livox_lidar_api.h>
 #include <livox_lidar_def.h>
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -122,36 +122,24 @@ Result<void> wait_control(ControlAwaiter& awaiter, const char* operation) {
     return Result<void>();
 }
 
-std::string read_c_string(const char* value, std::size_t capacity) {
-    std::size_t length = 0;
-    while (length < capacity && value[length] != '\0') {
-        ++length;
-    }
-    return std::string(value, length);
-}
+/// @brief `LivoxLidarDiagInternalInfoResponse::data` 的可用长度上限。
+///
+/// 该字段在 SDK 头里声明为 `uint8_t data[1]`（柔性数组），`sizeof` 拿不到真实长度。
+/// 这里取 SDK 自身的命令缓冲上限（`kMaxCommandBufferSize = 1400`，见 SDK2 的
+/// `sdk_core/comm/define.h`）——应答负载不可能超过它，而每一步扫描都按它做越界检查。
+constexpr std::size_t kMaxInternalInfoBytes = 1400;
 
 /// @brief 解析 `QueryLivoxLidarInternalInfo` 的 TLV 负载，提取 IP 配置。
 ///
-/// SDK 头文件只给出 `param_num`，没有总长度；先在 4 字节对齐的分条下扫描，
-/// 找不到再按紧凑分条扫描，兼容两种序列化方式。
+/// 边界检查全部交给 `tlv_find_string()`：它按容量逐步校验，读到越界就停，
+/// 不再像改前那样拿设备给的 `length` 直接往后推（审计 H25）。
 LidarInternalInfo parse_internal_info(const LivoxLidarDiagInternalInfoResponse& response) {
     LidarInternalInfo info;
     info.param_count = response.param_num;
-    for (const std::size_t stride_align : {std::size_t{4}, std::size_t{0}}) {
-        const std::uint8_t* cursor = response.data;
-        for (std::uint16_t i = 0; i < response.param_num; ++i) {
-            std::uint16_t key = 0;
-            std::uint16_t length = 0;
-            std::memcpy(&key, cursor, sizeof(key));
-            std::memcpy(&length, cursor + sizeof(key), sizeof(length));
-            const char* value = reinterpret_cast<const char*>(cursor + 2 * sizeof(std::uint16_t));
-            if (key == kKeyLidarIpCfg && length > 0) {
-                info.ip_address = read_c_string(value, std::min<std::size_t>(length, 16));
-                return info;
-            }
-            const std::size_t base = 4U + length;
-            cursor += stride_align == 0 ? base : ((base + stride_align - 1) & ~(stride_align - 1));
-        }
+    const auto ip_address = tlv_find_string(response.data, kMaxInternalInfoBytes,
+                                            response.param_num, kKeyLidarIpCfg, 16);
+    if (ip_address.has_value()) {
+        info.ip_address = *ip_address;
     }
     return info;
 }
