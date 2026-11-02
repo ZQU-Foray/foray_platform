@@ -225,6 +225,32 @@ TEST(PacketParserTest, MapsTimeType) {
     EXPECT_EQ(sync_from_time_type(9), hal::TimestampSync::kUnknown);
 }
 
+// 审计 H21：`rsvd`(12–23) 与 `crc32`(24–27) 这两段本仓不读也不校验——校验由 Livox
+// SDK2 在回调前完成。把这两段任意改成垃圾，解析结果必须一字不差；哪天有人给它加校验，
+// 这条会红，届时 `docs/driver_livox.md` §4 的偏移表也必须一起改。
+TEST(PacketParserTest, HeaderIgnoresReservedAndCrc32Bytes) {
+    const std::vector<std::uint8_t> payload = test::high_point_payload(1000, -2000, 3000, 77, 3);
+    const std::vector<std::uint8_t> clean =
+        make_packet(0x01, 1, 1, 9, 4, 123456789ULL, 10, payload);
+    std::vector<std::uint8_t> dirty = clean;
+    for (std::size_t offset = 12; offset < 28; ++offset) {
+        dirty[offset] = 0xEE;
+    }
+
+    const Result<PacketHeader> original = parse_header(clean.data(), clean.size());
+    const Result<PacketHeader> tampered = parse_header(dirty.data(), dirty.size());
+    ASSERT_TRUE(original.ok()) << original.error().message;
+    ASSERT_TRUE(tampered.ok()) << tampered.error().message;
+    EXPECT_EQ(tampered.value().length, original.value().length);
+    EXPECT_EQ(tampered.value().time_interval, original.value().time_interval);
+    EXPECT_EQ(tampered.value().dot_num, original.value().dot_num);
+    EXPECT_EQ(tampered.value().udp_cnt, original.value().udp_cnt);
+    EXPECT_EQ(tampered.value().frame_cnt, original.value().frame_cnt);
+    EXPECT_EQ(tampered.value().data_type, original.value().data_type);
+    EXPECT_EQ(tampered.value().time_type, original.value().time_type);
+    EXPECT_EQ(tampered.value().timestamp_ns, original.value().timestamp_ns);
+}
+
 TEST(PacketParserTest, ConvertsIpv4AndModel) {
     const std::uint32_t handle = ipv4_to_handle("192.168.1.100");
     EXPECT_NE(handle, 0U);

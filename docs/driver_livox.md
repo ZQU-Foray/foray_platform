@@ -118,13 +118,19 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 |---|---|---|
 | 0 | version | 协议版本 |
 | 1 | length | 头 + 载荷总长（小端 u16） |
-| 3 | time_interval | 点间隔，单位 0.1 µs |
+| 3 | time_interval | **整包时间跨度**，单位 0.1 µs（点间隔 = `time_interval × 100 / dot_num` ns，见下） |
 | 5 | dot_num | 包内点数 |
 | 7 | udp_cnt | 帧内包序号，0 为首包 |
 | 9 | frame_cnt | 帧号（u8，回绕） |
 | 10 | data_type | 0x00 IMU / 0x01 高精度 / 0x02 低精度 / 0x03 球坐标 / 0x11 双回波 |
 | 11 | time_type | 0 NoSync / 1 PTP / 2 GPS / 3、4 PPS |
+| 12 | rsvd | 保留，12 字节（12–23），接收端忽略 |
+| 24 | crc32 | 小端 u32（24–27）；**本仓不校验**——校验在 Livox SDK2 内部完成，回调拿到的包已被拦过一层（审计 H21） |
 | 28 | timestamp | 首点时间（ns） |
+
+> 偏移表覆盖 0–35 全部字节：本仓只读取上面标注了字段名的偏移（`packet_parser.cpp:29-37` 的
+> `kOffset*` 常量），`rsvd` 与 `crc32` 既不读也不校验；照这张表二次开发时不要以为它们是
+> 载荷的一部分。
 
 点转换：
 

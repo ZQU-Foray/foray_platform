@@ -18,11 +18,12 @@ enum class PacketKind {
     kPointCloud,
 };
 
-/// @brief 固定 36 字节头部；字段偏移见 Livox 通信协议。
+/// @brief 固定 36 字节头部；字段偏移见 Livox 通信协议（12–23 为 rsvd、24–27 为 crc32，
+/// 本仓既不读也不校验后者——校验由 Livox SDK2 在回调前完成，见 `docs/driver_livox.md` §4）。
 struct PacketHeader {
     std::uint8_t version = 0;
     std::uint16_t length = 0;
-    /// @brief 包内点间隔，单位 0.1 µs。
+    /// @brief 整包时间跨度，单位 0.1 µs；点间隔 = `time_interval × 100 / dot_num` ns。
     std::uint16_t time_interval = 0;
     std::uint16_t dot_num = 0;
     std::uint16_t udp_cnt = 0;
