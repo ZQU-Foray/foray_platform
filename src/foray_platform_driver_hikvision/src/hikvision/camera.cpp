@@ -37,6 +37,10 @@ constexpr std::uint32_t kMaxConsecutiveErrors = 5;
 /// 误判，真正停掉的流也能在上层超时抱怨之前进入 `kError` 交给 `recover()`。
 constexpr std::int64_t kStarvationWindowNs = 2'000'000'000;
 
+/// PTP 状态重探测间隔：`GevIEEE1588Status` 从 Master/FreeRun 收敛到 Slave 通常要几秒，
+/// 每秒一次远快于收敛速度，又不会给控制通道加压（审计 H26 附带项③）。
+constexpr std::int64_t kPtpProbeIntervalNs = 1'000'000'000;
+
 /// @brief `read()` 的轮询间隔，与 Livox 驱动保持一致。
 constexpr std::uint32_t kPollMicroseconds = 200;
 
@@ -463,6 +467,7 @@ Result<void> CameraImpl::start_locked() {
     stop_requested_.store(false, std::memory_order_release);
     consecutive_errors_.store(0, std::memory_order_relaxed);
     starve_since_ns_ = 0;
+    last_ptp_probe_ns_ = 0;
     // 触发方式属于 static 级配置（运行期不热改），在这里一次性告诉取流线程：
     // 触发模式下的「没数据」是正常状态，不能判成停摆（审计 H13）。
     wait_for_trigger_.store(config_.trigger.mode != hal::TriggerMode::kOff,
@@ -622,10 +627,44 @@ void CameraImpl::grab_loop() {
         consecutive_errors_.store(0, std::memory_order_relaxed);
         starve_since_ns_ = 0;
 
+        refresh_ptp_if_needed();
         publish_frame(*frame.value());
 
         // 同一线程归还：MV_CC_FreeImageBuffer 必须与 MV_CC_GetImageBuffer 配对。
         api_->free_frame(handle_, std::move(frame.value()));
+    }
+}
+
+void CameraImpl::refresh_ptp_if_needed() {
+    {
+        std::lock_guard<std::mutex> lock(tuning_mutex_);
+        if (timestamp_config_.ptp_slave && timestamp_config_.tick_frequency_hz != 0) {
+            // 已经拿到 PTP 基准，不再打扰控制通道。
+            return;
+        }
+    }
+    const std::int64_t now_ns = time::SteadyClock().now().nanoseconds_since_epoch();
+    if (last_ptp_probe_ns_ != 0 && now_ns - last_ptp_probe_ns_ < kPtpProbeIntervalNs) {
+        return;
+    }
+    last_ptp_probe_ns_ = now_ns;
+
+    // 查询在锁外：`get_enum`/`get_int` 走 SDK 控制通道，可能阻塞。
+    const bool ptp_slave = query_ptp_slave(*api_, handle_);
+    const std::uint32_t tick_frequency = query_tick_frequency(*api_, handle_);
+    if (!ptp_slave && tick_frequency == 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(tuning_mutex_);
+    if ((ptp_slave && !timestamp_config_.ptp_slave) ||
+        (tick_frequency != 0 && timestamp_config_.tick_frequency_hz == 0)) {
+        // 只更新这两个字段：其余（偏移、延迟、兜底开关）是 static 级配置，
+        // 不能因为一次探测就把它们重置掉。
+        timestamp_config_.ptp_slave = ptp_slave;
+        if (tick_frequency != 0) {
+            timestamp_config_.tick_frequency_hz = tick_frequency;
+        }
     }
 }
 

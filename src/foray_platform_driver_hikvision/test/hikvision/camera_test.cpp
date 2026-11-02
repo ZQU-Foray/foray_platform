@@ -536,6 +536,42 @@ TEST(HikvisionCamera, FrameCarriesTiming) {
 }
 
 /**
+ * @brief 审计 H26 附带项③：PTP 在 open() 之后才收敛，状态必须能被重新读到。
+ *
+ * 改前 `GevIEEE1588Status` / `DeviceTicksFrequency` 只在 `open()` 读一次：开机的
+ * 那一瞬相机还在 `Master`，于是整场运行都拿不到 `kPtp`，所有帧只能退到
+ * 「主机接收时刻」——明明 PTP 后来同步上了，时间戳精度却一直是最差的那档。
+ */
+TEST(HikvisionCamera, PtpSlaveDetectedMidStreamUpgradesTiming) {
+    Harness harness;
+    harness.api->enum_values[std::string(node::kPtpStatus)] = "Master";
+    harness.api->int_values[std::string(node::kDeviceTicksFrequency)] = 1000000000;
+    harness.stream_ok();
+
+    detail::FrameInfoView info = mono8_frame_info();
+    info.device_ticks = 5000000000ULL; // 5 s（1 GHz tick）
+    harness.api->push_frame(make_frame(info));
+
+    hal::FrameLease<hal::ImageFrame> lease;
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease).ok()) << "首帧读取超时";
+    EXPECT_EQ(lease->sync, hal::TimestampSync::kHostReceive);
+
+    // PTP 收敛：设备侧状态变成 Slave。取流线程要在一个探测周期内读到它。
+    harness.api->enum_values[std::string(node::kPtpStatus)] = "Slave";
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+    detail::FrameInfoView info2 = mono8_frame_info(2);
+    info2.device_ticks = 6000000000ULL; // 6 s
+    harness.api->push_frame(make_frame(info2));
+
+    hal::FrameLease<hal::ImageFrame> lease2;
+    ASSERT_TRUE(read_until_frame(*harness.camera, lease2).ok()) << "第二帧读取超时";
+    EXPECT_EQ(lease2->sync, hal::TimestampSync::kPtp);
+    EXPECT_EQ(lease2->device_time_ns, 6000000000LL);
+    EXPECT_EQ(lease2->stamp.nanoseconds_since_epoch(), 6000000000LL);
+}
+
+/**
  * @brief 审计 H9：`frame_id` 打开期固定，`apply()` 必须整包拒绝而不是悄悄忽略。
  *
  * 已交付租约的 `ImageFrame::frame_id` 是指向 `frame_id_` 存储的 `string_view`，

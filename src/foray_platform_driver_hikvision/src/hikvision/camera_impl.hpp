@@ -115,6 +115,13 @@ class CameraImpl final : public hal::Camera {
     /// @brief 把一帧拷进帧池并发布。
     void publish_frame(const FrameView& frame);
 
+    /// @brief 还没同步上时周期性重读 PTP 状态与 tick 频率（审计 H26 附带项③）。
+    ///
+    /// PTP 从启动到收敛是秒级过程，`open()` 那一瞬读到的 `GevIEEE1588Status`
+    /// 通常还是 `Master`/`FreeRun`；只读一次等于这台相机永远拿不到 `kPtp`。
+    /// 由取流线程在出帧后调用，按 `kPtpProbeIntervalNs` 节流。
+    void refresh_ptp_if_needed();
+
     std::shared_ptr<MvsApi> api_;
     hal::CameraConfig config_;
 
@@ -180,6 +187,11 @@ class CameraImpl final : public hal::Camera {
     /// 由控制线程在 `start_locked()` 里按 `config_.trigger.mode` 写入，
     /// 取流线程只读——触发方式是 static 级配置，运行期不会热改。
     std::atomic<bool> wait_for_trigger_{false};
+
+    /// @brief 上一次探测 PTP 状态的时刻（steady ns）；0 表示本次启动后还没探测过。
+    ///
+    /// 只由取流线程读写，不需要原子；每次 `start_locked()` 清零。
+    std::int64_t last_ptp_probe_ns_ = 0;
 
     std::atomic<std::uint64_t> frames_received_{0};
 

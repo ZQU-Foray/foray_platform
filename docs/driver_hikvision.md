@@ -460,6 +460,22 @@ MVS 侧可用信息：
 此时路径 1、2 都无从计算（偏移没有设备时间可加），`auto` 降为 `kHostReceive`、
 `device` 降为 `kNoSync`，绝不假装「设备时间可用」。
 
+### 7.1 PTP 状态会重探测（审计 H26 附带项③）
+
+`GevIEEE1588Status` 与 `DeviceTicksFrequency` 在 `open()` 读一次是不够的：PTP
+从启动到收敛是秒级过程，开机那一瞬相机通常还在 `Master`/`FreeRun`，只读一次等于
+整场运行都拿不到 `kPtp`，所有帧只能退到「主机接收时刻」。
+
+现在取流线程在每次成功出帧后调用 `refresh_ptp_if_needed()`：只要当前
+`timestamp_config_` 还没拿到 PTP 基准（`ptp_slave == false` 或
+`tick_frequency_hz == 0`），就按 `kPtpProbeIntervalNs`（1 s）节流重读这两个节点；
+一旦读到 `Slave`（或补上了 tick 频率），就只更新这两个字段——
+`device_to_host_offset_ns`、`exposure_to_host_latency_ns`、`allow_unsynced_stamp`
+是 static 级配置，不会被一次探测重置。已经拿到 PTP 基准后不再探测。
+
+SDK 查询在 `tuning_mutex_` 之外做，更新在锁内做；`last_ptp_probe_ns_` 只由取流线程
+读写，`start_locked()` 每次启动清零，所以重新 start 后第一帧就会探测一次。
+
 ## 8. 错误映射
 
 | MVS 返回码 | `ErrorCode` |
