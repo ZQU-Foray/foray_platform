@@ -16,6 +16,16 @@ namespace {
  */
 constexpr std::int64_t kBaseClockJumpNs = 1'000'000'000;
 
+/**
+ * @brief `udp_cnt` 缺口算「丢包」还是算「乱序/重置」的分界（半个 uint16 圈）。
+ *
+ * `udp_cnt` 是 16 位计数，缺口按模 65536 求差：真实丢包只会让计数往前跳过一小段，
+ * 而乱序包（旧计数迟到）或设备重启后的计数重置会让差值接近一整圈。取半圈 32768：
+ * 一帧内的包数远小于它（200k 点/帧、每包 96 点也只有约 2100 包），所以前向缺口落在这
+ * 一侧的判定不会误伤；越界的差值只记异常次数，不污染丢包指标。
+ */
+constexpr std::uint16_t kUdpCntGapLimit = 32768;
+
 } // namespace
 
 FrameAssembler::FrameAssembler(std::shared_ptr<hal::FramePool<hal::PointCloudFrame>> pool,
@@ -46,6 +56,8 @@ bool FrameAssembler::on_packet(const PacketHeader& header, const std::uint8_t* p
             return published;
         }
     }
+
+    note_udp_cnt(header);
 
     if (dropping_ || frame_overflow_ || header.dot_num == 0) {
         if (frame_overflow_ || dropping_) {
@@ -173,7 +185,36 @@ bool FrameAssembler::begin_frame(const PacketHeader& header, std::uint64_t recei
     frame_dropped_packets_ = 0;
     frame_overflow_ = false;
     dropping_ = false;
+    // 新的一帧重新开始数 udp_cnt：帧首包本身就是新序列的起点，不能与上一帧的末包求差。
+    udp_cnt_seen_ = false;
+    last_udp_cnt_ = 0;
     return true;
+}
+
+void FrameAssembler::note_udp_cnt(const PacketHeader& header) noexcept {
+    if (!frame_cnt_represents_frame_) {
+        // 非重复扫描机型：`udp_cnt` 不承担帧内序号语义，按它求差只会得到假缺口。
+        return;
+    }
+    if (!udp_cnt_seen_) {
+        udp_cnt_seen_ = true;
+        last_udp_cnt_ = header.udp_cnt;
+        return;
+    }
+
+    // 以「本包」为下一包的基准：坏包/乱序包不会让后续每个包都被算成缺口。
+    const std::uint16_t expected = static_cast<std::uint16_t>(last_udp_cnt_ + 1U);
+    last_udp_cnt_ = header.udp_cnt;
+    if (header.udp_cnt == expected) {
+        return;
+    }
+
+    const std::uint16_t step = static_cast<std::uint16_t>(header.udp_cnt - expected);
+    if (step < kUdpCntGapLimit) {
+        udp_cnt_gaps_.fetch_add(step, std::memory_order_relaxed);
+    } else {
+        udp_cnt_anomalies_.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool FrameAssembler::publish() {

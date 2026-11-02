@@ -185,6 +185,7 @@ hal::SensorStats LidarImpl::stats() const noexcept {
     result.frames_delivered = frames_delivered_.load(std::memory_order_relaxed);
     result.frames_dropped = frames_dropped_.load(std::memory_order_relaxed);
     result.packets_dropped = imu_dropped_.load(std::memory_order_relaxed);
+    result.packets_lost = udp_cnt_gaps_.load(std::memory_order_relaxed);
     result.timeouts = timeouts_.load(std::memory_order_relaxed);
     result.sdk_errors = sdk_errors_.load(std::memory_order_relaxed);
     result.reconnects = reconnects_.load(std::memory_order_relaxed);
@@ -629,6 +630,10 @@ void LidarImpl::handle_packet(const PacketSlot& slot, FrameAssembler& assembler)
     if (dropped_after > dropped_before) {
         frames_dropped_.fetch_add(dropped_after - dropped_before, std::memory_order_relaxed);
     }
+
+    // 组帧器的计分在解析线程里累加，`stats()` 从别的线程读，镜像成原子量。
+    udp_cnt_gaps_.store(assembler.udp_cnt_gaps(), std::memory_order_relaxed);
+    udp_cnt_anomalies_.store(assembler.udp_cnt_anomalies(), std::memory_order_relaxed);
 }
 
 void LidarImpl::drain_queues_locked() noexcept {

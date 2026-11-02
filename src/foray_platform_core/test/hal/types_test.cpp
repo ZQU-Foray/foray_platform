@@ -93,6 +93,8 @@ TEST(HalSensorTest, InfoAndStatsDefaults) {
     EXPECT_EQ(stats.frames_received, 0U);
     EXPECT_EQ(stats.frames_dropped, 0U);
     EXPECT_EQ(stats.reconnects, 0U);
+    // 审计 H23 新增的字段：默认 0 表示"测不出来"，不是"没丢包"，见 sensor_stats.hpp 注释。
+    EXPECT_EQ(stats.packets_lost, 0U);
 }
 
 } // namespace

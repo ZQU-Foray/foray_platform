@@ -19,6 +19,8 @@ namespace foray::platform::driver::livox::detail {
 namespace {
 
 constexpr std::uint8_t kMid360 = 9;
+// HAP 系列是重复扫描机型：`udp_cnt` 是帧内包序号，可以据此推算丢包（审计 H23）。
+constexpr std::uint8_t kHap = 15;
 constexpr std::uint8_t kMid360s = 35;
 constexpr std::uint16_t kCloudPoints = 2;
 constexpr time::Duration kReadTimeout = time::Duration::from_milliseconds(1000);
@@ -152,6 +154,37 @@ TEST_F(LidarTest, LifecycleCloudImuAndStats) {
     EXPECT_EQ(lidar->state(), hal::DeviceState::kClosed);
     EXPECT_TRUE(lidar->close().ok());
     EXPECT_EQ(api->uninit_calls, 1);
+}
+
+/**
+ * 审计 H23：重复扫描机型（这里用 HAP 的 15）的 `udp_cnt` 是帧内包序号，
+ * 缺口必须出现在 `stats().packets_lost` 里。改前 `SensorStats` 根本没有这个字段，
+ * 网络丢包只能靠"帧点云看着稀疏"猜，长跑时的丢包率完全算不出来。
+ */
+TEST_F(LidarTest, StatsReportUdpCntLossForRepeatingScan) {
+    auto api = std::make_shared<test::MockLivoxApi>();
+    const std::string ip = "192.168.1.150";
+    const std::uint32_t handle = ipv4_to_handle(ip);
+    auto lidar = make_device(make_config(ip, "lidar"), api);
+    ASSERT_NE(lidar, nullptr);
+
+    ASSERT_TRUE(lidar->open().ok());
+    api->emit_info(handle, kHap, "SN150", ip);
+    ASSERT_TRUE(lidar->start().ok());
+
+    api->emit_point_packet(handle, kHap, cloud_packet(0, 0, 1'000'000));
+    api->emit_point_packet(handle, kHap, cloud_packet(0, 1, 1'000'500));
+    // 跳过 udp_cnt = 2、3：这两包没到。
+    api->emit_point_packet(handle, kHap, cloud_packet(0, 4, 1'001'000));
+
+    hal::FrameLease<hal::PointCloudFrame> lease;
+    const Result<void> read = lidar->read(lease, kReadTimeout);
+    ASSERT_TRUE(read.ok()) << read.error().message;
+    EXPECT_EQ(lease->count, 3U * kCloudPoints);
+    EXPECT_EQ(lidar->stats().packets_lost, 2U);
+
+    ASSERT_TRUE(lidar->stop().ok());
+    ASSERT_TRUE(lidar->close().ok());
 }
 
 TEST_F(LidarTest, ReadTimeoutAndNoData) {

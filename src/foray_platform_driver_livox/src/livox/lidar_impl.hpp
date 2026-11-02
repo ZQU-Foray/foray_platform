@@ -107,6 +107,10 @@ class LidarImpl final : public hal::Lidar {
     std::atomic<std::uint64_t> frames_delivered_{0};
     std::atomic<std::uint64_t> frames_dropped_{0};
     std::atomic<std::uint64_t> imu_dropped_{0};
+    /// @brief 由解析线程按 `udp_cnt` 缺口镜像过来的网络丢包数（审计 H23）。
+    std::atomic<std::uint64_t> udp_cnt_gaps_{0};
+    /// @brief 同上，`udp_cnt` 回退/大跳的次数（不算丢包）。
+    std::atomic<std::uint64_t> udp_cnt_anomalies_{0};
     std::atomic<std::uint64_t> timeouts_{0};
     std::atomic<std::uint64_t> sdk_errors_{0};
     std::atomic<std::uint64_t> reconnects_{0};

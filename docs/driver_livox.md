@@ -135,10 +135,18 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 其他约定：
 
 - 首包的 `timestamp` 作为 `base_time` / `device_base_time_ns`；
+- **按 `udp_cnt` 连续性统计丢包（审计 H23）**：重复扫描机型在同一 `frame_cnt` 内
+  `udp_cnt` 逐包 +1，缺口就是没到的包，累加进 `FrameAssembler::udp_cnt_gaps()` 并
+  通过 `hal::SensorStats::packets_lost` 暴露；差值按模 65536 求，超过半圈（32768）的
+  视为乱序/计数重置，只计入 `udp_cnt_anomalies()` 不算丢包；帧首包若丢失无法归因
+  （没有前序包可比），因此长跑口径会少算每帧第一个包。Mid-360 系列的 `udp_cnt`
+  不承担帧内序号语义，**不**据此统计丢包；
 - 点缓冲满时丢弃当前帧剩余包，`points_dropped` 累计；
 - 无空闲帧槽时丢帧并 `dropped_frames++`，不阻塞解析线程；
 - 超过 `frame_timeout_ms` 无新包时发布当前帧（防止最后一帧滞留）；
 - `stop()/close()` 时 `flush()` 当前帧；
+- `packets_lost`（上游丢包）与 `packets_dropped`（本组件丢包）是两个独立指标，
+  长跑告警阈值建议按丢包率 `packets_lost / (packets_received + packets_lost)` 算；
 - 输出传感器安装系，外参不在此处应用。
 
 ## 6. 时间语义
@@ -261,6 +269,8 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 - 双回波 `0x11` 未实现，需要确认固件/SDK 版本与结构；
 - `host_ip` 变化需要重新创建运行时（进程内只初始化一次）；
 - 未做数据包 CRC 校验（SDK 已校验）；
+- `packets_lost` 只在重复扫描机型上有效；Mid-360 系列没有可用的帧内包序号，
+  该字段恒为 0，**0 只代表"测不出来"，不代表没丢包**；
 - 多雷达共用一份 host JSON；如需不同主机 IP/端口，需扩展运行时配置；
 - Mid-360s 的 SDK JSON 键是大小写敏感的 `"Mid360s"`，自定义 JSON 必须包含；
 - 默认单播；组播需要自定义 JSON 中的 `multicast_ip` 并确保网桥转发。

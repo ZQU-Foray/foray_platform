@@ -161,6 +161,90 @@ TEST(FrameAssemblerTest, NoFreeSlotDropsFrame) {
     EXPECT_EQ(lease->count, 2U);
 }
 
+/**
+ * 审计 H23：`udp_cnt` 是设备侧的包序号，同帧内逐包 +1；缺口就是没到的包。
+ * 改前代码只在帧边界用到 `udp_cnt`（判 `== 0`），连续性根本不看，丢包完全不可见。
+ */
+TEST(FrameAssemblerTest, UdpCntGapCountsLostPackets) {
+    auto pool = make_pool(3);
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
+
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 0, 1'000'000, 2), 100));
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 1, 1'000'500, 2), 200));
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 2, 1'001'000, 2), 300));
+    // 跳过 udp_cnt = 3、4：这两包没到。
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 5, 1'001'500, 2), 400));
+    EXPECT_EQ(assembler.udp_cnt_gaps(), 2U);
+    EXPECT_EQ(assembler.udp_cnt_anomalies(), 0U);
+
+    // 新帧开始重新数：帧首包的 udp_cnt=0 不能与上一帧末包求差。
+    EXPECT_TRUE(feed(assembler, frame_packet(1, 0, 2'000'000, 2), 500));
+    EXPECT_EQ(assembler.udp_cnt_gaps(), 2U);
+    EXPECT_EQ(assembler.udp_cnt_anomalies(), 0U);
+}
+
+/**
+ * 乱序/计数重置会让模 65536 的差值接近一整圈，那种情况只记异常次数，不算丢包——
+ * 否则一次乱序就能把丢包指标推到几万。
+ */
+TEST(FrameAssemblerTest, UdpCntRollbackIsAnomalyNotLoss) {
+    auto pool = make_pool(3);
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
+
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 10, 1'000'000, 2), 100));
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 3, 1'000'500, 2), 200));
+    EXPECT_EQ(assembler.udp_cnt_gaps(), 0U);
+    EXPECT_EQ(assembler.udp_cnt_anomalies(), 1U);
+    // 乱序包不改变基准：下一包按「以本包为准」继续算，udp_cnt=4 紧跟 3 不算缺口。
+    EXPECT_FALSE(feed(assembler, frame_packet(0, 4, 1'001'000, 2), 300));
+    EXPECT_EQ(assembler.udp_cnt_gaps(), 0U);
+    EXPECT_EQ(assembler.udp_cnt_anomalies(), 1U);
+}
+
+/**
+ * Mid-360 系列的 `udp_cnt` 不承担帧内序号语义，按它求差只会得到一堆假缺口。
+ */
+TEST(FrameAssemblerTest, Mid360DoesNotInferLossFromUdpCnt) {
+    auto pool = make_pool(3);
+    FrameAssembler assembler(pool, 1024, 4, kMid360DeviceType, "lidar");
+
+    EXPECT_FALSE(feed(assembler, frame_packet(3, 7, 1'000'000, 2), 100));
+    EXPECT_FALSE(feed(assembler, frame_packet(9, 41, 1'001'000, 2), 200));
+    EXPECT_EQ(assembler.udp_cnt_gaps(), 0U);
+    EXPECT_EQ(assembler.udp_cnt_anomalies(), 0U);
+}
+
+/**
+ * 长跑口径：10000 个序号里每 73 个丢 1 个，缺口必须精确等于丢掉的包数——
+ * 这是报告里"改前 0（测不出来）→ 改后 137"那条数值对比的来源。
+ */
+TEST(FrameAssemblerTest, UdpCntGapsAggregateOverLongRun) {
+    auto pool = make_pool(3);
+    FrameAssembler assembler(pool, 256, 4, kHapDeviceType, "lidar");
+
+    constexpr std::uint16_t kTotalPackets = 10000;
+    constexpr std::uint16_t kLossStride = 73;
+    std::uint64_t expected = 0;
+    std::uint16_t emitted = 0;
+    for (std::uint16_t index = 0; index < kTotalPackets; ++index) {
+        if (index % kLossStride == 0) {
+            ++expected;
+            continue;
+        }
+        // frame_cnt 保持 0，只让 udp_cnt 连续递增；每包一个点，避免撑爆帧容量。
+        EXPECT_FALSE(feed(assembler, frame_packet(0, index, 1'000'000, 1), index + 1U));
+        ++emitted;
+    }
+
+    // 帧首包（index=0）也被丢掉了，但它前面没有包可比，无法归因；所以可归因的丢包
+    // 是 expected - 1 = 136。这个边界必须写清楚，否则长跑口径会系统性少算第一个包。
+    EXPECT_EQ(assembler.udp_cnt_gaps(), expected - 1U);
+    // 丢掉的实际包数是 137（index 0, 73, ..., 9929），可归因 136。
+    EXPECT_EQ(expected, kTotalPackets / kLossStride + 1U);
+    EXPECT_EQ(assembler.udp_cnt_anomalies(), 0U);
+    EXPECT_EQ(emitted, kTotalPackets - expected);
+}
+
 TEST(FrameAssemblerTest, FrameCountUsabilityFollowsDeviceType) {
     // 非重复扫描机型只认时间窗；其余机型（含未知机型）沿用 frame_cnt 语义。
     EXPECT_FALSE(frame_cnt_represents_frame(kMid360DeviceType));

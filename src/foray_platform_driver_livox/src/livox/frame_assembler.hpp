@@ -81,8 +81,26 @@ class FrameAssembler {
         return clock_jumps_.load(std::memory_order_relaxed);
     }
 
+    /**
+     * @brief 按 `udp_cnt` 连续性推算出的网络丢包数（审计 H23）。
+     *
+     * 设备在同一个 `frame_cnt` 里按 `udp_cnt` 逐包递增下发，缺口就是没到的包。
+     * 只对重复扫描机型统计：Mid-360 系列的 `udp_cnt` 不承担帧内序号语义，
+     * 拿它当序号只会得到一堆假缺口（详见 `docs/driver_livox.md`）。
+     */
+    std::uint64_t udp_cnt_gaps() const noexcept {
+        return udp_cnt_gaps_.load(std::memory_order_relaxed);
+    }
+
+    /// @brief `udp_cnt` 回退/大跳（乱序或计数重置）的次数；这类缺口不算丢包。
+    std::uint64_t udp_cnt_anomalies() const noexcept {
+        return udp_cnt_anomalies_.load(std::memory_order_relaxed);
+    }
+
   private:
     bool begin_frame(const PacketHeader& header, std::uint64_t receive_steady_ns);
+    /// @brief 用本包的 `udp_cnt` 与上一包比对，累计缺口（丢包）或异常次数。
+    void note_udp_cnt(const PacketHeader& header) noexcept;
     bool is_frame_boundary(const PacketHeader& header, std::uint64_t receive_steady_ns);
     bool accept_frame_base(const PacketHeader& header) noexcept;
     bool frame_expired(const PacketHeader& header, std::uint64_t receive_steady_ns) const noexcept;
@@ -106,6 +124,10 @@ class FrameAssembler {
     /// @brief 已接受帧基准的单调水线，用于挡住乱序/回退包。
     std::int64_t last_base_device_ns_ = 0;
     std::uint64_t base_receive_steady_ns_ = 0;
+    /// @brief 当前帧内是否已经见过 `udp_cnt`；每帧在 `begin_frame()` 里复位。
+    bool udp_cnt_seen_ = false;
+    /// @brief 上一包的 `udp_cnt`，用于算缺口。只在解析线程读写。
+    std::uint16_t last_udp_cnt_ = 0;
     hal::TimestampSync sync_ = hal::TimestampSync::kUnknown;
     std::size_t count_ = 0;
     std::uint64_t last_packet_steady_ns_ = 0;
@@ -120,6 +142,8 @@ class FrameAssembler {
     std::atomic<std::uint64_t> frame_cnt_discontinuities_{0};
     std::atomic<std::uint64_t> stale_time_packets_{0};
     std::atomic<std::uint64_t> clock_jumps_{0};
+    std::atomic<std::uint64_t> udp_cnt_gaps_{0};
+    std::atomic<std::uint64_t> udp_cnt_anomalies_{0};
 };
 
 } // namespace foray::platform::driver::livox::detail
