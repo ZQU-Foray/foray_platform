@@ -15,6 +15,12 @@ namespace foray::platform::driver::livox::test {
 class MockLivoxApi final : public detail::LivoxApi {
   public:
     Result<void> init(const std::string& json_path, const std::string& host_ip) override {
+        if (init_failures > 0) {
+            // 审计 H22 用例需要"每次重连都打不开设备"，才能让 recover() 走满退避。
+            --init_failures;
+            ++init_calls;
+            return make_error(ErrorCode::kSdkError, "mock: SDK 初始化失败注入");
+        }
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             accepting.store(true, std::memory_order_release);
@@ -221,6 +227,7 @@ class MockLivoxApi final : public detail::LivoxApi {
     std::array<float, 6> attitude{};  // roll, pitch, yaw, x, y, z
     std::string reported_ip;          // 读回时假装雷达回报的 IP
     int query_calls = 0;
+    int init_failures = 0;            // SDK 初始化失败注入次数（让 recover 走满退避）
     int query_failures = 0;           // 读回失败注入次数
     int control_failures = 0;         // 控制下发失败注入次数
 

@@ -191,13 +191,31 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 ```
 
 - `open()`：校验配置 → 初始化 SDK → 建立队列/帧池 → 注册 sink；
-- `start()`：等待 `InfoChange`（最长 5 s）→ 下发工作模式/点类型/扫描模式
+- `start()`：**不持控制锁**等待 `InfoChange`（最长 5 s）→ 下发工作模式/点类型/扫描模式
   （5 次重试，间隔 100 ms）→ 启动解析线程；
 - `stop()`：置 sink 非活跃、停止并 join 解析线程、flush 当前帧；
 - `close()`：幂等；释放队列/帧池，注销 sink，最后一个实例触发 SDK Uninit；
-- `recover()`：stop → 释放 → 按 100/200/400/800/1600 ms 退避重新 open/start；
+- `recover()`：stop → 请求复位 → 释放 → 按 100/200/400/800/1600 ms 退避重新 open/start；
   成功后 `reconnects++`；
 - 掉线期间已发出的 `FrameLease` 仍有效（帧池由 `shared_ptr` 保活）。
+
+### 8.1 控制调用的阻塞边界（审计 H22）
+
+`control_mutex_` 只保护状态机与资源指针，**不覆盖等待**：
+
+- `start()` 的设备上线等待、`recover()` 的退避 sleep 都在锁外，因此掉线恢复期间
+  `stop()` / `close()` / `info()` 仍然秒回，不会被 3.1 s 退避（改前最坏约 28 s，
+  含每次尝试里最长 5 s 的 `wait_for_info`）一起钉住；
+- `start()` 等设备上线超时时**不把状态踩成 `kError`**，保持 `kOpen`：设备晚一点
+  上线可以直接重试 `start()`，不必为了重试先走一遍 `recover()`；
+- 两条控制路径之间用"控制代次"（`control_generation_`）判定是否被打断：每次公共
+  控制调用自增一次；`recover()` 在锁外醒来发现代次变了，就立刻放手返回
+  `kNotOpen`，**不会**在用户已经 `close()` 之后把设备重新打开；
+- 失效的 `sink_` 同样会被拦下：`start()` / `recover()` 收尾时比对
+  `std::atomic_load(&sink_)` 是否仍等于等待前那份快照，不等就放弃本次启动。
+
+因此 `recover()` 的调用方协议变成：**它可以阻塞数秒（退避），但不会阻塞其他控制调用**；
+需要取消就调用 `close()`。
 
 ## 9. 错误映射
 
