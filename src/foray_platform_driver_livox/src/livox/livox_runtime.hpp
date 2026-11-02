@@ -53,15 +53,36 @@ struct CallbackSink {
     /// @brief 抢 `producer_lock_` 时发生竞争的累计次数；非 0 说明 SDK 用了多线程回调。
     std::atomic<std::uint64_t> producer_contended{0};
 
-    /// @brief 选择条件；只在下线前由控制线程写，回调读取。
-    std::string serial;
-    std::string ip_address;
+    /**
+     * @brief 选择条件（serial / IP）的写入与读取（审计 H24）。
+     *
+     * 这两条字符串的写入方有三个：注册时由控制线程按配置写入、`InfoChange` 回调
+     * （SDK 线程）在为空时补写、`on_info` 的 handle 兜底匹配也要读。读取方还有
+     * `update_sensor_info_locked()`（控制线程）与 `info()` 的调用线程。原来它们就是
+     * 裸 `std::string`，跨线程读写等于在 `std::string` 内部指针上赛跑——TSan 会直接
+     * 报 data race，而 release 构建下读到半截字符串是可能的。
+     *
+     * 因此统一走一把小锁 + **值拷贝**：这些字段只在下线/Info 变化时写，不在每包
+     * 热路径上，互斥量的代价可以忽略。
+     */
+    void set_selector(std::string serial_value, std::string ip_address_value);
+    /// @brief 只在对应字段为空时补写（`InfoChange` 路径）。
+    void fill_selector_if_empty(const char* serial_value, const char* ip_address_value);
+    /// @brief handle 字节序不一致时按 serial / IP 匹配 sink。
+    bool selector_matches(const char* serial_value, const char* ip_address_value) const;
+    std::string serial_copy() const;
+    std::string ip_address_copy() const;
 
     /// @brief 单个包最大字节数；由创建者在注册前写入。
     std::uint16_t max_packet_bytes = static_cast<std::uint16_t>(kMaxPacketBytes);
 
     /// @brief SDK 回调入口：校验长度、打接收时间戳并拷贝到队列。
     void push(const PacketView& packet) noexcept;
+
+  private:
+    mutable std::mutex selector_mutex_;
+    std::string serial_;
+    std::string ip_address_;
 };
 
 /**

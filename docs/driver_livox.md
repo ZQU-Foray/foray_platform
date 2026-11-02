@@ -80,6 +80,21 @@ SDK 回调线程
 也正因为生产者之间没有顺序保证，解析线程不得依赖点云包与 IMU 包在队列里的相对次序，
 只能按各自包内时间戳归并（见 §6）。
 
+### 2.2 选择条件字符串的跨线程访问
+
+`sink->serial` / `sink->ip_address`（选择条件）原来就是两条裸 `std::string`，而它们的
+写入方有三个：注册时按配置写（控制线程）、`InfoChange` 回调为空时补写（SDK 线程）、
+`on_info()` 的 handle 兜底匹配（SDK 线程读）；读取方还有 `update_sensor_info_locked()`
+（控制线程）与 `info()` 的调用线程。没有同步的 `std::string` 读写是在内部指针上赛跑，
+release 构建下可能读到半截字符串（审计 H24，TSan 复现过
+`CallbackSink::serial_copy` 的 data race）。
+
+- 现在统一走 `CallbackSink` 内部的一把 `selector_mutex_` + **值拷贝**：
+  `set_selector()` / `fill_selector_if_empty()` / `selector_matches()` /
+  `serial_copy()` / `ip_address_copy()`；字符串本身是 private，外部改不了也不会误用；
+- 这些字段只在下线或 `InfoChange` 时写，不在每包热路径上，互斥量的代价可忽略；
+- 读到的永远是**完整**字符串：要么旧值、要么新值，不会是"写了一半"。
+
 ## 3. SDK 运行时与多雷达
 
 Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发重复调用。

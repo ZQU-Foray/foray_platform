@@ -93,4 +93,54 @@ TEST(CallbackSinkTest, TwoConcurrentProducersNeverCorruptOrLosePackets) {
     EXPECT_EQ(per_device[1], kPacketsPerProducer);
 }
 
+/**
+ * @brief 审计 H24：`serial` / `ip_address` 原来是裸 `std::string`，被 SDK 的
+ * `InfoChange` 回调线程与控制线程同时读写。
+ *
+ * 这里让一个线程反复补写选择条件、另一个线程反复读拷贝，改前（无锁裸字符串）
+ * TSan 会报 data race；改后应当干净且读到的值要么空要么完整。
+ */
+TEST(CallbackSinkTest, SelectorStringsSurviveConcurrentWritersAndReaders) {
+    auto sink = std::make_shared<CallbackSink>();
+    sink->set_selector("", "");
+
+    constexpr int kRounds = 4000;
+    std::atomic<bool> start{false};
+
+    const auto writer = [&]() {
+        while (!start.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        for (int index = 0; index < kRounds; ++index) {
+            sink->fill_selector_if_empty("SN001", "192.168.1.100");
+            sink->set_selector("SN001", "192.168.1.100");
+        }
+    };
+
+    const auto reader = [&]() {
+        while (!start.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        for (int index = 0; index < kRounds; ++index) {
+            const std::string serial = sink->serial_copy();
+            const std::string ip = sink->ip_address_copy();
+            // 读到的必须是空串或完整串，不允许半截。
+            EXPECT_TRUE(serial.empty() || serial == "SN001");
+            EXPECT_TRUE(ip.empty() || ip == "192.168.1.100");
+            (void)sink->selector_matches("SN001", nullptr);
+        }
+    };
+
+    std::thread writer_thread(writer);
+    std::thread reader_thread(reader);
+    start.store(true, std::memory_order_release);
+    writer_thread.join();
+    reader_thread.join();
+
+    EXPECT_EQ(sink->serial_copy(), "SN001");
+    EXPECT_EQ(sink->ip_address_copy(), "192.168.1.100");
+    EXPECT_TRUE(sink->selector_matches("SN001", nullptr));
+    EXPECT_FALSE(sink->selector_matches("SN999", "10.0.0.1"));
+}
+
 } // namespace foray::platform::driver::livox::detail

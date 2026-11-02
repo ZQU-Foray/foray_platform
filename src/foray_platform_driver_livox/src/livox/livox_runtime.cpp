@@ -10,6 +10,41 @@
 
 namespace foray::platform::driver::livox::detail {
 
+void CallbackSink::set_selector(std::string serial_value, std::string ip_address_value) {
+    std::lock_guard<std::mutex> lock(selector_mutex_);
+    serial_ = std::move(serial_value);
+    ip_address_ = std::move(ip_address_value);
+}
+
+void CallbackSink::fill_selector_if_empty(const char* serial_value, const char* ip_address_value) {
+    std::lock_guard<std::mutex> lock(selector_mutex_);
+    if (serial_.empty() && serial_value != nullptr) {
+        serial_ = serial_value;
+    }
+    if (ip_address_.empty() && ip_address_value != nullptr) {
+        ip_address_ = ip_address_value;
+    }
+}
+
+bool CallbackSink::selector_matches(const char* serial_value, const char* ip_address_value) const {
+    std::lock_guard<std::mutex> lock(selector_mutex_);
+    const bool serial_matches =
+        !serial_.empty() && serial_value != nullptr && serial_ == serial_value;
+    const bool ip_matches =
+        !ip_address_.empty() && ip_address_value != nullptr && ip_address_ == ip_address_value;
+    return serial_matches || ip_matches;
+}
+
+std::string CallbackSink::serial_copy() const {
+    std::lock_guard<std::mutex> lock(selector_mutex_);
+    return serial_;
+}
+
+std::string CallbackSink::ip_address_copy() const {
+    std::lock_guard<std::mutex> lock(selector_mutex_);
+    return ip_address_;
+}
+
 void CallbackSink::push(const PacketView& packet) noexcept {
     if (!active.load(std::memory_order_acquire)) {
         return;
@@ -209,11 +244,7 @@ void LivoxRuntime::on_info(const InfoView& info) {
                 continue;
             }
 
-            const bool serial_matches = !candidate->serial.empty() && info.serial != nullptr &&
-                                        candidate->serial == info.serial;
-            const bool ip_matches = !candidate->ip_address.empty() && info.ip_address != nullptr &&
-                                    candidate->ip_address == info.ip_address;
-            if (!serial_matches && !ip_matches) {
+            if (!candidate->selector_matches(info.serial, info.ip_address)) {
                 continue;
             }
 
@@ -228,12 +259,7 @@ void LivoxRuntime::on_info(const InfoView& info) {
     }
 
     sink->dev_type.store(info.dev_type, std::memory_order_relaxed);
-    if (sink->serial.empty() && info.serial != nullptr) {
-        sink->serial = info.serial;
-    }
-    if (sink->ip_address.empty() && info.ip_address != nullptr) {
-        sink->ip_address = info.ip_address;
-    }
+    sink->fill_selector_if_empty(info.serial, info.ip_address);
     sink->info_received.store(true, std::memory_order_release);
 }
 

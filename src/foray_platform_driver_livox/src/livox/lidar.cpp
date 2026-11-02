@@ -342,8 +342,7 @@ Result<void> LidarImpl::open_locked() {
 
         std::shared_ptr<CallbackSink> sink = std::make_shared<CallbackSink>();
         sink->queue = queue_;
-        sink->serial = config_.selector.serial;
-        sink->ip_address = config_.selector.ip_address;
+        sink->set_selector(config_.selector.serial, config_.selector.ip_address);
         sink->max_packet_bytes = static_cast<std::uint16_t>(config_.max_packet_bytes);
         sink->handle.store(expected_handle, std::memory_order_release);
         std::atomic_store_explicit(&sink_, std::move(sink), std::memory_order_release);
@@ -530,11 +529,12 @@ void LidarImpl::update_sensor_info_locked() {
     std::lock_guard<std::mutex> lock(info_mutex_);
     info_.vendor = "Livox";
     info_.model = model_name(dev_type);
-    info_.serial = sink_->serial;
+    info_.serial = sink_->serial_copy();
     info_.user_defined_name = config_.selector.user_defined_name;
     info_.firmware_version.clear();
     info_.transport = hal::Transport::kGigE;
-    info_.ip_address = sink_->ip_address.empty() ? config_.selector.ip_address : sink_->ip_address;
+    const std::string sink_ip = sink_->ip_address_copy();
+    info_.ip_address = sink_ip.empty() ? config_.selector.ip_address : sink_ip;
     info_.frame_id = config_.frame_id;
 }
 
