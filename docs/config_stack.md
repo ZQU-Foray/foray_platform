@@ -1,6 +1,6 @@
 # 统一配置解析栈
 
-> 所属层：L1 平台基础 · 代码：`foray_platform/include/foray/platform/config/`
+> 所属层：L1 平台基础 · 代码：`src/foray_platform_core/include/foray/platform/config/`
 > 归属：解析机制在 `foray_platform`；机器人相关配置值与装配在 `foray_robots`。
 
 ## 1. 为什么放在 `foray_platform`
