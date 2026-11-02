@@ -417,9 +417,10 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     }
 
     try {
+        // 池只负责提供 `slots × frame_bytes` 的缓冲；每帧的像素格式、尺寸、frame_id
+        // 等字段由 `publish_frame()` 逐帧填写——frame_id 自 H9 起在 open() 期冻结，
+        // 不能在池里预先钉死后又被改写。
         set_frame_pool(std::make_shared<hal::FramePool<hal::ImageFrame>>(slots, frame_bytes));
-        // 先创建空池再填入像素格式等“每帧固定”字段，取流时只改序号与时间。
-        pool_->payload_size();
     } catch (const std::bad_alloc&) {
         return Result<void>(make_error(
             ErrorCode::kInternal, "帧池内存分配失败：需要 " + std::to_string(slots) + " × " +
