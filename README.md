@@ -10,7 +10,7 @@ L1 平台基础 + L2 下行 HAL
 
 ## 快速开始
 
-> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform` 包，**不依赖 ROS**）。
+> 当前已落地 L1 的时间/时钟、参数系统与通用错误码（`foray_platform_core` 包，**不依赖 ROS**）。
 > L2 HAL 与 ROS 适配层正在按计划落地。
 > `link` target 的 USB CDC 原始字节通道、候选 RoboLink 编解码与主机链路已离线全绿，
 > 但**未与 MCU 固件联调**，见下文 [link（候选协议）](#已实现但未经实机验收linkusb-cdc--候选-robolink)。
@@ -20,7 +20,7 @@ L1 平台基础 + L2 下行 HAL
 依赖：CMake ≥ 3.16、C++17 编译器、yaml-cpp；测试另需 GTest。
 
 ```bash
-cmake -S foray_platform -B ~/.cache/foray-platform-build/platform \
+cmake -S src/foray_platform_core -B ~/.cache/foray-platform-build/platform \
       -DCMAKE_BUILD_TYPE=Release
 cmake --build ~/.cache/foray-platform-build/platform -j"$(nproc)"
 ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
@@ -34,7 +34,7 @@ ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
 驱动包默认 **不依赖 SDK**，用 stub 构建并跑 mock 测试：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=OFF
 cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
@@ -45,7 +45,7 @@ ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
 `foray_ws/scripts/build_livox_sdk2.sh` 完成），再打开开关：
 
 ```bash
-cmake -S foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
       -DFORAY_BUILD_DRIVER_LIVOX=ON \
       -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
@@ -88,12 +88,12 @@ colcon test --event-handlers console_direct+
 | 类型 | 依赖 |
 |---|---|
 | **自研仓** | `foray_interfaces`（X2 接口契约层） |
-| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · Livox SDK2（可选，驱动编译开关）· Hikvision MVS（可选，待落地） |
+| **第三方** | yaml-cpp（参数热加载）· GTest（仅测试）· Eigen3 · ROS 2 Humble · Livox SDK2（可选，驱动编译开关）· Hikvision MVS（可选，驱动编译开关） |
 
 ## 接口
 
 > 本仓是 **C++ 库**，不是 ROS 节点。这里的「接口」指**公共 C++ API**；
-> `foray_platform` 的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
+> `foray_platform_core` 包的 core target 不直接定义 ROS 话题/服务。需要跨进程的契约由
 > `foray_interfaces`（X2）定义；后续 ROS 适配层落地后再在本节补充话题/参数清单。
 >
 > 未冻结的接口只描述**契约方向**，不承诺具体签名。
@@ -171,7 +171,7 @@ colcon test --event-handlers console_direct+
 | 包 | 接口 | 状态 |
 |---|---|---|
 | `foray_platform_driver_livox` | `foray::platform::driver::livox::make_lidar(const hal::LidarConfig&)` | **代码、mock 测试与实机 HIL 已完成**（Mid-360s） |
-| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | 未开始（M7/M8） |
+| `foray_platform_driver_hikvision` | `foray::platform::driver::hikvision::make_camera(const hal::CameraConfig&)` | **代码、mock 测试与实机 HIL 已完成**（MV-CS004-10GC），见 [接入与封装方案](docs/driver_hikvision.md) |
 
 Livox 驱动特性：
 
@@ -187,17 +187,41 @@ Livox 驱动特性：
   （PCD + 俯视 PPM；`--stream` 逐点流式 stdout，统计走 stderr）与
   `foray_livox_config`（读回 → 下发雷达 IP/姿态/主机端口 → 再读回校验）。
 
-**雷达网络自举**：作为硬件抽象层的一部分，本仓必须能一键把物理网口挂进
-雷达网桥并配置主机地址，而不要求操作手现场 `sudo ip link`：
+Hikvision 驱动特性：
 
-- 只读探测拓扑（`foray/platform/net/net_types.hpp`）→ 幂等规划
+- `detail::MvsApi` 抽象掉全部 `MV_CC_*` 调用，单测用 mock、编译期 OFF 时退化到
+  stub（所有操作 `kSdkUnavailable`），上层加载路径不变；
+- 设备选择按 `serial` → `user_defined_name` → `model`+`index` → `ip` 依次收窄，
+  条件不足一律报错，**不猜**；枚举结果按 serial 去重（主机双 IP 会让同一相机出现两次）；
+- 只映射 8 位 Mono/Bayer 五种格式，其它格式的帧被拒绝并计 `sdk_errors`；
+- 时间戳三条路径：PTP 从设备 tick 换算、标定偏移校正主机时钟、无同步时按
+  接收时刻减去曝光延迟，都不成立则零 stamp + `kNoSync`；
+- 运行期调参走 `Camera::apply()`，节点写入失败保留 MVS 原始码供现场对照；
+- `FORAY_HIKVISION_BUILD_TOOLS=ON` 提供 `foray_hikvision_dump`
+  （配置 + 取 N 帧 + 帧率/丢帧统计，`--trigger-software` 走软触发）；
+  构建期找到 SDL2 时还支持 `--view` 开窗口实时预览画面（可选依赖，
+  找不到也不影响工具其余功能）。
+
+**设备网络自举**：作为硬件抽象层的一部分，本仓必须能一键把雷达 / GigE 相机
+所在的物理网口挂进对应网桥、配置主机地址与巨帧 MTU，而不要求操作手现场
+`sudo ip link`：
+
+- 只读探测拓扑（`foray/platform/net/net_types.hpp`，含 sysfs MTU）→ 幂等规划
   （`plan_link`）→ 授权执行（`ensure_link`，失败自动回滚）；
+- 编排层 `foray/platform/net/bootstrap.hpp` 由雷达与相机工具共用：非 root 自动
+  `pkexec` 调 `foray-net-helper`，链路已就绪则跳过；
 - NetworkManager 优先（创建 `foray-<iface>-slave` profile，重启不丢），
-  没有 NM 时回退 rtnetlink；
+  没有 NM 时回退 rtnetlink；两条路径都实现 `set_mtu`；
+- 物理口已属于另一个网桥时默认拒绝，避免把雷达口从 `br-lidar` 静默抢走；
+  确需迁移时显式传 `--allow-reassign-master`；
+- MTU 设置失败只 warning 不阻断：GigE 720×540@125 Hz 在 1500 下实测可跑，
+  9014 是推荐值而非硬前提；
 - 特权只来自 polkit：`foray-net-helper` 装到 libexec，动作
   `org.foray.netconfig.bootstrap` 只放行该程序；
 - 雷达参数下发走 `foray_livox_config`，默认只读回校验，`--set-lidar-ip`
-  等显式开关才改写，写后必读回。
+  等显式开关才改写，写后必读回；
+- USB3 相机的协议级自举（USB3 Vision 控制通道）尚未实现，
+  `foray_hikvision_up --transport usb3` 目前只做可见性检测并打印 TODO。
 
 **急停硬路径**：最终安全降级（`cmd_vel` 超时归零、发射机构断电）**不依赖中间件**，
 位于最靠近执行器的执行器抽象内部，使用独立实时线程 + 超时定时器，
@@ -230,7 +254,10 @@ Livox 驱动特性：
 - [L2 HAL 架构](docs/hal_architecture.md)——生命周期、线程模型、帧池与零拷贝边界
 - [传感器驱动封装调研](docs/hal_sensor_driver_research.md)——海康 MVS 与 Livox SDK2 的 HAL 封装方案
 - [Livox 驱动](docs/driver_livox.md)——运行时、包解析、组帧、时间同步与多雷达
+- [Hikvision 驱动方案](docs/driver_hikvision.md)——MVS 接入序列、`MvsApi` 隔离、取流线程、配置映射与时间戳
+- [相机配置](docs/camera_config.md)——`camera.*` 键空间、静态/动态分级与运行时调参契约
 - [驱动部署](docs/driver_deployment.md)——SDK2 构建、网络、PPS/PTP 与运行环境
+- [厂商 SDK 打包调研](docs/sdk_packaging_survey.md)——RM 战队如何打包与调用 MVS 等闭源相机 SDK（横评）
 - [雷达网络自举](docs/net_bootstrap.md)——拓扑探测、NM/netlink 双后端、polkit 与回滚
 - [RoboLink 协议对账](docs/robolink_protocol_review.md)——候选线协议逐字段核对，待电控确认
 
