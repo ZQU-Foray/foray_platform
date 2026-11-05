@@ -1,5 +1,7 @@
 #include "mvs_nodes.hpp"
 
+#include <initializer_list>
+#include <limits>
 #include <string>
 
 #include "foray/platform/hal/config.hpp"
@@ -374,11 +376,17 @@ bool query_ptp_slave(MvsApi& api, void* handle) noexcept {
 }
 
 std::uint32_t query_tick_frequency(MvsApi& api, void* handle) noexcept {
-    auto status = api.get_int(handle, node::kDeviceTicksFrequency);
-    if (!status.ok() || status.value() <= 0) {
-        return 0;
+    // GigE 相机优先使用 Gev 节点；其余名字只为不同型号兼容。
+    for (const auto name : {node::kGevTimestampTickFrequency,
+                            node::kTimestampTickFrequency,
+                            node::kDeviceTicksFrequency}) {
+        auto status = api.get_int(handle, name);
+        if (status.ok() && status.value() > 0 &&
+            status.value() <= std::numeric_limits<std::uint32_t>::max()) {
+            return static_cast<std::uint32_t>(status.value());
+        }
     }
-    return static_cast<std::uint32_t>(status.value());
+    return 0;
 }
 
 TimestampConfig make_timestamp_config(const hal::CameraConfig& config, bool ptp_slave,

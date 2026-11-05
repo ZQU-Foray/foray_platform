@@ -405,6 +405,12 @@ MVS 侧可用信息：
 `tick_freq` 读不到时：`device_tick_frequency_hz = 0`、`device_time_ns = 0`，
 `sync` 至少降为 `kHostReceive`，绝不假装「设备时间可用」。
 
+MV-CS004-10GC 实机读取到 `GevTimestampTickFrequency = 100000000 Hz`；
+`DeviceTicksFrequency` 与 `TimestampTickFrequency` 在该机型上不存在。
+驱动按 Gev、通用、旧节点的顺序尝试。设备 tick 从相机自身时钟起算，
+PTP 未启用时不能直接与主机或电控时间戳相减，也不能把它称为已验证的
+「发出图像时间」；默认 `stamp` 的主机接收时间回退仍保留。
+
 ## 8. 错误映射
 
 | MVS 返回码 | `ErrorCode` |

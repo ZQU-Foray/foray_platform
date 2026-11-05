@@ -46,6 +46,8 @@ inline constexpr std::string_view kPtpStatus = "GevIEEE1588Status";
 inline constexpr std::string_view kPacketSize = "GevSCPSPacketSize";
 inline constexpr std::string_view kPacketDelay = "GevSCPD";
 inline constexpr std::string_view kHeartbeatTimeout = "GevHeartbeatTimeout";
+inline constexpr std::string_view kGevTimestampTickFrequency = "GevTimestampTickFrequency";
+inline constexpr std::string_view kTimestampTickFrequency = "TimestampTickFrequency";
 inline constexpr std::string_view kDeviceTicksFrequency = "DeviceTicksFrequency";
 
 } // namespace node

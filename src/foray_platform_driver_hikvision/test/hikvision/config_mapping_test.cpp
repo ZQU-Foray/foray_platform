@@ -433,6 +433,8 @@ TEST(HikvisionConfigMapping, QueryPtpSlaveToleratesMissingNode) {
 /// @brief tick 频率读不到或非正数都归零，时间换算据此降级。
 TEST(HikvisionConfigMapping, QueryTickFrequencyRejectsNonPositive) {
     test::MockMvsApi api;
+    api.failing_nodes.emplace(std::string(node::kGevTimestampTickFrequency), detail::mvs_error::kSupport);
+    api.failing_nodes.emplace(std::string(node::kTimestampTickFrequency), detail::mvs_error::kSupport);
     api.int_values[std::string(node::kDeviceTicksFrequency)] = 0;
     EXPECT_EQ(detail::query_tick_frequency(api, nullptr), 0U);
 
@@ -441,6 +443,13 @@ TEST(HikvisionConfigMapping, QueryTickFrequencyRejectsNonPositive) {
 
     api.int_values[std::string(node::kDeviceTicksFrequency)] = 80'000'000;
     EXPECT_EQ(detail::query_tick_frequency(api, nullptr), 80'000'000U);
+}
+
+TEST(HikvisionConfigMapping, QueryTickFrequencyPrefersGevNode) {
+    test::MockMvsApi api;
+    api.int_values[std::string(node::kGevTimestampTickFrequency)] = 100'000'000;
+    api.int_values[std::string(node::kDeviceTicksFrequency)] = 80'000'000;
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr), 100'000'000U);
 }
 
 } // namespace

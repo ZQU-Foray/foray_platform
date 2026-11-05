@@ -123,6 +123,7 @@
 > L2 HAL（同包 `hal` target）已落地；`link` target 的 USB CDC 与候选 RoboLink 编解码、主机链路
 > 已离线全绿（尚无装配程序，未与 MCU 固件联调）；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
 > Hikvision 驱动已落地（mock 全绿，MV-CS004-10GC 实机取流已验证）；ROS 适配层按计划加入。
+> 时间节点按 GigE/通用/旧型号顺序兼容查询；相机设备 tick 与主机收图时刻分别保存。
 
 ## 目录职责
 

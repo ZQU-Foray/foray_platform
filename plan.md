@@ -111,6 +111,10 @@
 
 ### M7/M8 交付物（Hikvision）（2026-10-24，已完成）
 
+2026-11-05 实机时间戳复核：确认 MV-CS004-10GC 支持
+`GevTimestampTickFrequency = 100 MHz`，修正 tick 频率查询优先级；
+保留设备 tick 与主机接收时间，跨设备对时/曝光或发送时刻语义待验证。
+
 设计与取舍见 [docs/driver_hikvision.md](docs/driver_hikvision.md)。
 - 隔离方式沿用 Livox：`detail::MvsApi` 虚接口，`src/hikvision/mvs_api_real.cpp`
   是唯一 include `MvCameraControl.h` 的翻译单元；公共头只有 HAL 类型；

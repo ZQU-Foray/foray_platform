@@ -502,6 +502,11 @@ Rejected:
 
 ## 2026-10-23 海康 MVS 驱动接入与封装方案
 
+2026-11-05 补充：MV-CS004-10GC 实机的 `GevTimestampTickFrequency` 为
+100 MHz，旧的 `DeviceTicksFrequency` 查询失败。驱动优先读取 GigE 节点，
+其次兼容通用与旧节点；不改变默认 `stamp` 语义。相机未开启 PTP，设备
+tick 不可直接作为与电控同一时钟域的绝对时间，也不宣称它是发包时刻。
+
 > 已在 2026-10-24 落地，实施细节见本文末条「2026-10-24」。
 
 Background:
