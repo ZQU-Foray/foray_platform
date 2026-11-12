@@ -452,11 +452,11 @@ Context: 比赛现场重配雷达链路要操作手手工 `sudo ip link set ... 
 Decision:
 - 新增 `diesel_platform::net`：只读 `probe_topology()` → 纯函数 `plan_link()` →
   `ensure_link()` 执行，失败按逆序回滚；
-- 后端**NetworkManager 优先**（创建 `foray-<iface>-slave` profile，重启保留），
+- 后端**NetworkManager 优先**（创建 `diesel-<iface>-slave` profile，重启保留），
   无 NM 时回退 rtnetlink；两者都实现同一 `NetBackend` 接口，可 mock；
-- 特权不用 setuid：`foray-net-helper` 装到 libexec，polkit 动作
-  `org.foray.netconfig.bootstrap` 用 `exec.path` 只放行该程序，参数白名单在工具内；
-  可选 `60-foray-netconfig.rules` 让 `foray` 组免密；
+- 特权不用 setuid：`diesel-net-helper` 装到 libexec，polkit 动作
+  `org.diesel.netconfig.bootstrap` 用 `exec.path` 只放行该程序，参数白名单在工具内；
+  可选 `60-diesel-netconfig.rules` 让 `diesel` 组免密；
 - 雷达参数注入走 `LivoxControl`：总尝试 3 次、间隔 100 ms、单次等待 800 ms；
   只对 kTimeout/kSdkError/kBusy/kNoData 重试；
 - 写参数后**必须读回**：`QueryLivoxLidarInternalInfo` 解析 `kKeyLidarIpCfg`

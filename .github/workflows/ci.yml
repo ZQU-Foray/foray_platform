@@ -240,7 +240,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PREFIX="$RUNNER_TEMP/foray-prefix"
+          PREFIX="$RUNNER_TEMP/diesel-prefix"
           cmake -S diesel_platform -B build/platform \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
@@ -254,7 +254,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PREFIX="$RUNNER_TEMP/foray-prefix"
+          PREFIX="$RUNNER_TEMP/diesel-prefix"
           cmake -S diesel_platform_driver_livox -B build/livox-on \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PREFIX" \
@@ -283,7 +283,7 @@ jobs:
           ldd "$BACKEND_TESTS" | grep -q livox_lidar_sdk
 
           if grep -R "$RUNNER_TEMP/livox-sdk2-prefix" \
-               "$RUNNER_TEMP/foray-prefix/lib/cmake"; then
+               "$RUNNER_TEMP/diesel-prefix/lib/cmake"; then
             echo "安装导出包含构建机绝对 SDK 路径" >&2
             exit 1
           fi

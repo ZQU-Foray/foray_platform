@@ -27,13 +27,13 @@ scripts/build_livox_sdk2.sh      # 构建并安装到本地前缀
 脚本等价的 CMake 参数（v1.3.1 的兼容处理）：
 
 ```bash
-cmake -S third_party/livox_sdk2 -B ~/.cache/foray-build/livox-sdk2 \
+cmake -S third_party/livox_sdk2 -B ~/.cache/diesel-build/livox-sdk2 \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$HOME/.cache/diesel-platform-prefix/livox-sdk2" \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_CXX_FLAGS="-include cstdint"
-cmake --build ~/.cache/foray-build/livox-sdk2 -j"$(nproc)"
-cmake --install ~/.cache/foray-build/livox-sdk2
+cmake --build ~/.cache/diesel-build/livox-sdk2 -j"$(nproc)"
+cmake --install ~/.cache/diesel-build/livox-sdk2
 ```
 
 安装后：
@@ -56,14 +56,14 @@ cmake --install ~/.cache/foray-build/livox-sdk2
 
 ```bash
 # 开发机真实后端
-cmake -S src/diesel_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/diesel_platform_driver_livox -B ~/.cache/diesel-platform-build/livox-on \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/diesel-platform-prefix" \
       -DDIESEL_BUILD_DRIVER_LIVOX=ON \
       -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
       -DLIVOX_SDK2_ROOT="$HOME/.cache/diesel-platform-prefix/livox-sdk2"
-cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
-ctest --test-dir ~/.cache/foray-platform-build/livox-on --output-on-failure
+cmake --build ~/.cache/diesel-platform-build/livox-on -j"$(nproc)"
+ctest --test-dir ~/.cache/diesel-platform-build/livox-on --output-on-failure
 ```
 
 - ON 时找不到 SDK：`FATAL_ERROR`，不静默退回 stub；
@@ -83,7 +83,7 @@ ctest --test-dir ~/.cache/foray-platform-build/livox-on --output-on-failure
 
 ```bash
 # 系统级
-echo "/opt/diesel/livox-sdk2/lib" | sudo tee /etc/ld.so.conf.d/foray-livox-sdk2.conf
+echo "/opt/diesel/livox-sdk2/lib" | sudo tee /etc/ld.so.conf.d/diesel-livox-sdk2.conf
 sudo ldconfig
 
 # 会话级
@@ -134,15 +134,15 @@ ldd install/diesel_platform_driver_livox/lib/libdiesel_platform_driver_livox.so 
 用链路本地地址（RFC 3927），一条 `/16` 地址即可覆盖整段；固定 IP 时只用
 `--host-ip` 显式指定，代码不猜网关。
 
-### 2.2 网桥（推荐用 `foray-net-helper` 一键自举）
+### 2.2 网桥（推荐用 `diesel-net-helper` 一键自举）
 
 本机使用 `br-lidar` 承载雷达网段。不要手工 `ip link`——NetworkManager 会在几秒内
-把私下的 slave 关系拆掉；正确做法是让 helper 通过 NM 创建 `foray-<iface>-slave`
+把私下的 slave 关系拆掉；正确做法是让 helper 通过 NM 创建 `diesel-<iface>-slave`
 profile（掉电重启也保留）：
 
 ```bash
 # 一次性安装 polkit 动作后，普通用户即可授权执行（见 §2.2.1）
-pkexec /usr/libexec/diesel_platform/foray-net-helper \
+pkexec /usr/libexec/diesel_platform/diesel-net-helper \
     --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51
 ip -brief addr show br-lidar      # 期望 UP + LOWER_UP + 192.168.1.51/24
 ```
@@ -159,7 +159,7 @@ MTU 不小于 master，helper 会先设物理口再设网桥；失败只 warning
 
 ```bash
 # 例：把相机口从旧桥迁到 br-camera（会先从旧桥摘下）
-pkexec /usr/libexec/diesel_platform/foray-net-helper \
+pkexec /usr/libexec/diesel_platform/diesel-net-helper \
     --iface enp0s13f0u1 --bridge br-camera --host-ip 169.254.114.1 \
     --mtu 9014 --allow-reassign-master
 ```
@@ -170,10 +170,10 @@ pkexec /usr/libexec/diesel_platform/foray-net-helper \
 
 | 文件 | 作用 |
 |---|---|
-| `/usr/share/polkit-1/actions/org.foray.netconfig.policy` | 只放行 helper 一个程序 |
-| `/usr/share/polkit-1/rules.d/60-foray-netconfig.rules` | 可选：`foray` 组成员免密 |
+| `/usr/share/polkit-1/actions/org.diesel.netconfig.policy` | 只放行 helper 一个程序 |
+| `/usr/share/polkit-1/rules.d/60-diesel-netconfig.rules` | 可选：`diesel` 组成员免密 |
 
-把操作手加入 `foray` 组即可无人值守；不加组时每次弹一次图形授权。
+把操作手加入 `diesel` 组即可无人值守；不加组时每次弹一次图形授权。
 
 #### 2.2.2 没有 NetworkManager 的环境
 
@@ -212,7 +212,7 @@ diesel_lidar_up --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51 \
                --lidar-ip 192.168.1.195 --frames 3
 ```
 
-- 链路未就绪时自动经 `pkexec` 调 `foray-net-helper`（不要求操作手记命令）；
+- 链路未就绪时自动经 `pkexec` 调 `diesel-net-helper`（不要求操作手记命令）；
 - 就绪后创建驱动、打开、`start()`，读 `--frames` 帧并打印
   `seq/points/dropped/sync` 与统计；
 - 加 `--dry-run` 只经 helper 打印 `planned:` 计划并跳过驱动，适合现场先看会改什么；

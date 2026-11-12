@@ -219,7 +219,7 @@ struct CameraTuning {
 virtual const std::vector<std::string>& supported_keys() const = 0;
 ```
 
-上游在配置期用 `foray-platform camera-config --check <file>`（后续提供）比对
+上游在配置期用 `diesel-platform camera-config --check <file>`（后续提供）比对
 `supported_keys()`，配置了不支持项即报错。
 
 ### 5.3 驱动层：订阅与映射
@@ -269,7 +269,7 @@ camera:
 
 ```bash
 # 或由上层通过 ParamManager::reload() 触发
-foray-platform camera-tune --key camera.exposure_us --value 2500
+diesel-platform camera-tune --key camera.exposure_us --value 2500
 ```
 
 ## 6. 与 `docs/driver_hikvision.md` §7 的关系

@@ -20,10 +20,10 @@ L1 平台基础 + L2 下行 HAL
 依赖：CMake ≥ 3.16、C++17 编译器、yaml-cpp；测试另需 GTest。
 
 ```bash
-cmake -S src/diesel_platform_core -B ~/.cache/foray-platform-build/platform \
+cmake -S src/diesel_platform_core -B ~/.cache/diesel-platform-build/platform \
       -DCMAKE_BUILD_TYPE=Release
-cmake --build ~/.cache/foray-platform-build/platform -j"$(nproc)"
-ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
+cmake --build ~/.cache/diesel-platform-build/platform -j"$(nproc)"
+ctest --test-dir ~/.cache/diesel-platform-build/platform --output-on-failure
 ```
 
 > ⚠️ 本仓位于 SMB 共享盘，构建目录必须放本地盘（共享盘不支持符号链接）。
@@ -34,18 +34,18 @@ ctest --test-dir ~/.cache/foray-platform-build/platform --output-on-failure
 驱动包默认 **不依赖 SDK**，用 stub 构建并跑 mock 测试：
 
 ```bash
-cmake -S src/diesel_platform_driver_livox -B ~/.cache/foray-platform-build/livox \
+cmake -S src/diesel_platform_driver_livox -B ~/.cache/diesel-platform-build/livox \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/diesel-platform-prefix" \
       -DDIESEL_BUILD_DRIVER_LIVOX=OFF
-cmake --build ~/.cache/foray-platform-build/livox -j"$(nproc)"
-ctest --test-dir ~/.cache/foray-platform-build/livox --output-on-failure
+cmake --build ~/.cache/diesel-platform-build/livox -j"$(nproc)"
+ctest --test-dir ~/.cache/diesel-platform-build/livox --output-on-failure
 ```
 
 真实硬件构建需先把 Livox SDK2 安装到私有前缀（推荐由
 `diesel_ws/scripts/build_livox_sdk2.sh` 完成），再打开开关：
 
 ```bash
-cmake -S src/diesel_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/diesel_platform_driver_livox -B ~/.cache/diesel-platform-build/livox-on \
       -DCMAKE_PREFIX_PATH="$HOME/.cache/diesel-platform-prefix" \
       -DDIESEL_BUILD_DRIVER_LIVOX=ON \
       -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
@@ -102,13 +102,13 @@ colcon test --event-handlers console_direct+
 
 | 头文件 | 命名空间 | 公共类型 / 函数 | 契约 |
 |---|---|---|---|
-| `foray/platform/time/time.hpp` | `diesel::platform::time` | `Duration` · `Timestamp` · `Clock` · `ClockDomain` · `SystemClock` · `SteadyClock` · `ManualClock` | 纳秒精度；时间点只在同一时钟域内比较；仿真时钟未就绪时 `now()` 为零且 `is_ready() == false` |
-| `foray/platform/param/param.hpp` | `diesel::platform::param` | `ParamType` · `ParamValue` · `ParamSpec` · `ParamSchema` · `ParamSnapshot` · `ParamStore` · `ParamSource` · `MapParamSource` · `YamlFileParamSource` · `ParamManager` · `ParamResult` / `ParamError` | 类型化 schema + 校验 + 热加载；读路径为不可变快照，写路径在非实时线程整批原子生效 |
-| `foray/platform/result/result.hpp` | `diesel::platform` | `ErrorCode` · `Error` · `Result<T>` · `Result<void>` | 公共 API 不抛异常；驱动原始错误码保存在 `Error::vendor_code` |
-| `foray/platform/container/spsc_queue.hpp` | `diesel::platform::container` | `SpscQueue<T>` | 有界、无锁、单生产者/单消费者；满时 `try_push` 返回 false 并累计 `dropped()` |
-| `foray/platform/config/config.hpp` | `diesel::platform::config` | `ConfigDocument` · `ConfigResolver` · `ConfigSnapshot` · `ConfigExporter` · `ConfigTool` · `MapEnvProvider` | 分层 YAML、include、`${ENV}`、`DIESEL_<PARAM>` 覆盖、provenance；复用 `param` 做校验 |
-| `foray/platform/hal/hal.hpp` | `diesel::platform::hal` | `Device` · `Camera` · `Lidar` · `ImageFrame` · `PointCloudFrame` · `ImuSample` · `FrameLease` · `FramePool` · `CameraConfig` / `LidarConfig` | 单写单读、最新帧邮箱；SDK 边界一次拷贝，租约之后零拷贝；时间戳带 `TimestampSync` |
-| `foray/platform/hal/config_binder.hpp` | `diesel::platform::hal` | `make_camera_param_schema` · `make_lidar_param_schema` · `bind_camera_config` · `bind_lidar_config` | 复用 `param` schema；跨字段校验（transport/serial/trigger）；不探测设备能力 |
+| `diesel/platform/time/time.hpp` | `diesel::platform::time` | `Duration` · `Timestamp` · `Clock` · `ClockDomain` · `SystemClock` · `SteadyClock` · `ManualClock` | 纳秒精度；时间点只在同一时钟域内比较；仿真时钟未就绪时 `now()` 为零且 `is_ready() == false` |
+| `diesel/platform/param/param.hpp` | `diesel::platform::param` | `ParamType` · `ParamValue` · `ParamSpec` · `ParamSchema` · `ParamSnapshot` · `ParamStore` · `ParamSource` · `MapParamSource` · `YamlFileParamSource` · `ParamManager` · `ParamResult` / `ParamError` | 类型化 schema + 校验 + 热加载；读路径为不可变快照，写路径在非实时线程整批原子生效 |
+| `diesel/platform/result/result.hpp` | `diesel::platform` | `ErrorCode` · `Error` · `Result<T>` · `Result<void>` | 公共 API 不抛异常；驱动原始错误码保存在 `Error::vendor_code` |
+| `diesel/platform/container/spsc_queue.hpp` | `diesel::platform::container` | `SpscQueue<T>` | 有界、无锁、单生产者/单消费者；满时 `try_push` 返回 false 并累计 `dropped()` |
+| `diesel/platform/config/config.hpp` | `diesel::platform::config` | `ConfigDocument` · `ConfigResolver` · `ConfigSnapshot` · `ConfigExporter` · `ConfigTool` · `MapEnvProvider` | 分层 YAML、include、`${ENV}`、`DIESEL_<PARAM>` 覆盖、provenance；复用 `param` 做校验 |
+| `diesel/platform/hal/hal.hpp` | `diesel::platform::hal` | `Device` · `Camera` · `Lidar` · `ImageFrame` · `PointCloudFrame` · `ImuSample` · `FrameLease` · `FramePool` · `CameraConfig` / `LidarConfig` | 单写单读、最新帧邮箱；SDK 边界一次拷贝，租约之后零拷贝；时间戳带 `TimestampSync` |
+| `diesel/platform/hal/config_binder.hpp` | `diesel::platform::hal` | `make_camera_param_schema` · `make_lidar_param_schema` · `bind_camera_config` · `bind_lidar_config` | 复用 `param` schema；跨字段校验（transport/serial/trigger）；不探测设备能力 |
 
 **时钟域与时间源**（详见 [设计](docs/time_and_clock.md)）：
 
@@ -136,12 +136,12 @@ colcon test --event-handlers console_direct+
 
 | 头文件 | 命名空间 | 公共类型 / 函数 | 契约 |
 |---|---|---|---|
-| `foray/platform/link/usb_cdc_port.hpp` | `diesel::platform::link` | `UsbCdcPort` | 只管理设备路径与文件描述符：`open` / `close` / 重开 + 原始字节读写，不解释协议帧 |
-| `foray/platform/link/robolink_crc.hpp` | `diesel::platform::link` | `crc32_iso_hdlc` | CRC-32/ISO-HDLC（标准校验值 `0xCBF43926`） |
-| `foray/platform/link/robolink_frame.hpp` · `robolink_frame_parser.hpp` | `diesel::platform::link` | `make_keepalive_frame` · `RoboLinkFrameParser` | 零槽保活组帧；字节流按 Magic + 头字段 + 长度 + CRC 切帧，坏头从魔数第二字节重扫，CRC 失败丢该帧 |
-| `foray/platform/link/robolink_codec.hpp` | `diesel::platform::link` | `encode_frame` / `decode_frame` · `encode_/decode_single_slot_frame` · `RoboLinkSlot` · `ControlSnapshot` · `SystemStatus` · `SystemDiagnostics` · `GimbalAttitude` · `Hello` / `HelloAck` / `Ack` / `ErrorMessage` | 显式小端序列化，零槽/单槽/多槽三类帧与八类载荷；不依赖 `diesel_auto_aim` 内部类型 |
-| `foray/platform/link/robolink_byte_channel.hpp` | `diesel::platform::link` | `RoboLinkByteChannel` | 只衔接设备与帧层：保留一帧待发送并处理部分写入，不做业务调度 |
-| `foray/platform/link/robolink_host_link.hpp` | `diesel::platform::link` | `RoboLinkHostLink` · `HostLinkState` · `ReceivedGimbalAttitude` | 主机侧 `step(now_ms)` 非阻塞状态机：HELLO 握手、心跳、状态/姿态回读、500 ms 超时断开、设备重开与控制排队 |
+| `diesel/platform/link/usb_cdc_port.hpp` | `diesel::platform::link` | `UsbCdcPort` | 只管理设备路径与文件描述符：`open` / `close` / 重开 + 原始字节读写，不解释协议帧 |
+| `diesel/platform/link/robolink_crc.hpp` | `diesel::platform::link` | `crc32_iso_hdlc` | CRC-32/ISO-HDLC（标准校验值 `0xCBF43926`） |
+| `diesel/platform/link/robolink_frame.hpp` · `robolink_frame_parser.hpp` | `diesel::platform::link` | `make_keepalive_frame` · `RoboLinkFrameParser` | 零槽保活组帧；字节流按 Magic + 头字段 + 长度 + CRC 切帧，坏头从魔数第二字节重扫，CRC 失败丢该帧 |
+| `diesel/platform/link/robolink_codec.hpp` | `diesel::platform::link` | `encode_frame` / `decode_frame` · `encode_/decode_single_slot_frame` · `RoboLinkSlot` · `ControlSnapshot` · `SystemStatus` · `SystemDiagnostics` · `GimbalAttitude` · `Hello` / `HelloAck` / `Ack` / `ErrorMessage` | 显式小端序列化，零槽/单槽/多槽三类帧与八类载荷；不依赖 `diesel_auto_aim` 内部类型 |
+| `diesel/platform/link/robolink_byte_channel.hpp` | `diesel::platform::link` | `RoboLinkByteChannel` | 只衔接设备与帧层：保留一帧待发送并处理部分写入，不做业务调度 |
+| `diesel/platform/link/robolink_host_link.hpp` | `diesel::platform::link` | `RoboLinkHostLink` · `HostLinkState` · `ReceivedGimbalAttitude` | 主机侧 `step(now_ms)` 非阻塞状态机：HELLO 握手、心跳、状态/姿态回读、500 ms 超时断开、设备重开与控制排队 |
 
 语义要点：
 
@@ -206,18 +206,18 @@ Hikvision 驱动特性：
 所在的物理网口挂进对应网桥、配置主机地址与巨帧 MTU，而不要求操作手现场
 `sudo ip link`：
 
-- 只读探测拓扑（`foray/platform/net/net_types.hpp`，含 sysfs MTU）→ 幂等规划
+- 只读探测拓扑（`diesel/platform/net/net_types.hpp`，含 sysfs MTU）→ 幂等规划
   （`plan_link`）→ 授权执行（`ensure_link`，失败自动回滚）；
-- 编排层 `foray/platform/net/bootstrap.hpp` 由雷达与相机工具共用：非 root 自动
-  `pkexec` 调 `foray-net-helper`，链路已就绪则跳过；
-- NetworkManager 优先（创建 `foray-<iface>-slave` profile，重启不丢），
+- 编排层 `diesel/platform/net/bootstrap.hpp` 由雷达与相机工具共用：非 root 自动
+  `pkexec` 调 `diesel-net-helper`，链路已就绪则跳过；
+- NetworkManager 优先（创建 `diesel-<iface>-slave` profile，重启不丢），
   没有 NM 时回退 rtnetlink；两条路径都实现 `set_mtu`；
 - 物理口已属于另一个网桥时默认拒绝，避免把雷达口从 `br-lidar` 静默抢走；
   确需迁移时显式传 `--allow-reassign-master`；
 - MTU 设置失败只 warning 不阻断：GigE 720×540@125 Hz 在 1500 下实测可跑，
   9014 是推荐值而非硬前提；
-- 特权只来自 polkit：`foray-net-helper` 装到 libexec，动作
-  `org.foray.netconfig.bootstrap` 只放行该程序；
+- 特权只来自 polkit：`diesel-net-helper` 装到 libexec，动作
+  `org.diesel.netconfig.bootstrap` 只放行该程序；
 - 雷达参数下发走 `diesel_livox_config`，默认只读回校验，`--set-lidar-ip`
   等显式开关才改写，写后必读回；
 - USB3 相机的协议级自举（USB3 Vision 控制通道）尚未实现，

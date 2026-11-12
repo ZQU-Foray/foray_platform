@@ -178,7 +178,7 @@
   - `backend.hpp` + `nm_backend.hpp` + `netlink_backend.hpp`：NM 优先、netlink 回退；
   - `setup.hpp`：`plan_link()` 纯规划、`ensure_link()` 执行 + 逆序回滚、`select_backend()`；
 - `src/diesel_platform_core/apps/diesel_net_helper.cpp`：libexec helper，参数白名单，
-  polkit 动作 `org.foray.netconfig.bootstrap` 只放行该程序；
+  polkit 动作 `org.diesel.netconfig.bootstrap` 只放行该程序；
 - 驱动控制面：`LivoxApi` 增 set_lidar_ip / set_install_attitude / set_pps_sync_mode /
   set_host_port_cfg / set_rmc_sync_time / query_internal_info；`LivoxControl`
   统一重试与写后读回；`diesel_livox_config` 工具；
@@ -188,7 +188,7 @@
   `docs/driver_deployment.md` §2.2 改为 helper 自举；
 - 单测：平台 150 个用例（net 新增 32 个）、驱动 36 个（控制面 6 个）全绿；
 - **待 HIL**：实机雷达当前断线（`enp0s31f6` 无载波），helper 已能经 NM
-  创建 `foray-enp0s31f6-slave` 并给出"没有载波"警告。
+  创建 `diesel-enp0s31f6-slave` 并给出"没有载波"警告。
 
 ### M12 交付物（USB CDC 与候选 RoboLink）
 
@@ -218,7 +218,7 @@
   min_mtu=nullopt)`，空地址只校验挂桥/载波，MTU 0 视为未知；
 - `net/bootstrap.hpp`：`bootstrap_link()` 编排（探拓扑 → 判就绪 → pkexec →
   helper），雷达与相机共用；`diesel_lidar_up` 删除本地拼装，改为调用它；
-- `foray-net-helper`：新增 `--mtu 576-65535` 与 `--allow-reassign-master`；
+- `diesel-net-helper`：新增 `--mtu 576-65535` 与 `--allow-reassign-master`；
 - Hikvision：`camera_bootstrap`（LLA/同网段地址规划）、
   `diesel_hikvision_up`（挂 `br-camera` → 地址 → MTU → 枚举 → 取 3 帧），
   USB3 只做可见性检测 + TODO；
@@ -251,7 +251,7 @@ M14_LAYOUT_REFACTOR_DONE + HOST_LINK_V02_OFFLINE_TESTED（目录规范化完成�
 
 commit hash:   af2dd95（origin/dev，合并上游后）
 branch:        feat/usb-cdc
-modified files: 新增 `foray/platform/link/` 头文件、`src/link/` 源码、`test/link/` 测试；
+modified files: 新增 `diesel/platform/link/` 头文件、`src/link/` 源码、`test/link/` 测试；
   CMakeLists 新增 link 库目标与 install；README/tree/plan/decision 增补 link 章节
 risk level:    L1
 
@@ -285,8 +285,8 @@ Commit: （首次提交）
 - [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
 - [x] Livox 真实 SDK2 构建、ON 编译/链接与下游消费
 - [x] Livox 实机读取：Mid-360s 点云 + IMU + PCD/PPM
-- [x] 网络自举：probe/plan/rollback/nmcli 命令行断言覆盖，`foray-net-helper`
-      经 pkexec 实机生效（NM profile `foray-enp0s31f6-slave` 持久）
+- [x] 网络自举：probe/plan/rollback/nmcli 命令行断言覆盖，`diesel-net-helper`
+      经 pkexec 实机生效（NM profile `diesel-enp0s31f6-slave` 持久）
 - [x] 常规 / ASan+UBSan / TSan 三套构建全绿（平台 151 + 驱动 36）
 - [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `diesel_lidar_up`）
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）

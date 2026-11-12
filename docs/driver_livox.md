@@ -226,14 +226,14 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 构建时打开（需要 SDK ON）：
 
 ```bash
-cmake -S src/diesel_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/diesel_platform_driver_livox -B ~/.cache/diesel-platform-build/livox-on \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$HOME/.cache/diesel-platform-prefix" \
   -DDIESEL_BUILD_DRIVER_LIVOX=ON \
   -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
   -DLIVOX_SDK2_ROOT="$HOME/.cache/diesel-platform-prefix/livox-sdk2" \
   -DDIESEL_LIVOX_BUILD_TOOLS=ON
-cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
+cmake --build ~/.cache/diesel-platform-build/livox-on -j"$(nproc)"
 ```
 
 运行：
@@ -241,7 +241,7 @@ cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
 ```bash
 export LD_LIBRARY_PATH="$HOME/.cache/diesel-platform-prefix/livox-sdk2/lib:$LD_LIBRARY_PATH"
 
-~/.cache/foray-platform-build/livox-on/diesel_livox_dump \
+~/.cache/diesel-platform-build/livox-on/diesel_livox_dump \
   --host-ip 192.168.1.51 \
   --lidar-ip 192.168.1.195 \
   --frames 3 \
@@ -262,7 +262,7 @@ imv /tmp/livox_cloud.ppm
 自检（不需要雷达，验证输出格式）：
 
 ```bash
-~/.cache/foray-platform-build/livox-on/diesel_livox_dump \
+~/.cache/diesel-platform-build/livox-on/diesel_livox_dump \
   --self-test --out /tmp/livox_selftest
 imv /tmp/livox_selftest.ppm
 ```
@@ -270,7 +270,7 @@ imv /tmp/livox_selftest.ppm
 流式输出（不落文件，直接给管道消费）：
 
 ```bash
-~/.cache/foray-platform-build/livox-on/diesel_livox_dump \
+~/.cache/diesel-platform-build/livox-on/diesel_livox_dump \
   --host-ip 192.168.1.51 \
   --lidar-ip 192.168.1.195 \
   --stream --frames 0 \
@@ -292,7 +292,7 @@ imv /tmp/livox_selftest.ppm
 无雷达时验证流式格式：
 
 ```bash
-~/.cache/foray-platform-build/livox-on/diesel_livox_dump --self-test --stream | head -4
+~/.cache/diesel-platform-build/livox-on/diesel_livox_dump --self-test --stream | head -4
 ```
 
 ### 12.2 官方工具（建议先做）

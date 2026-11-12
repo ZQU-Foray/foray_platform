@@ -4,7 +4,7 @@
 NetworkManager 凭据、巨帧 MTU、设备 IP 与主机端口。手工 `ip link` + `sudo`
 既慢又容易忘，且 NetworkManager 会把私下的 slave 关系拆掉。本模块把这段流程
 收敛成 **只读探测 → 幂等规划 → 授权执行 → 回滚** 四步，供
-`foray-net-helper`、`diesel_lidar_up` 与 `diesel_hikvision_up` 复用。
+`diesel-net-helper`、`diesel_lidar_up` 与 `diesel_hikvision_up` 复用。
 
 ## 1. 分层
 
@@ -13,7 +13,7 @@ NetworkManager 凭据、巨帧 MTU、设备 IP 与主机端口。手工 `ip link
 | 类型 | `include/diesel/platform/net/net_types.hpp` | `Ipv4`、`InterfaceInfo`（含 `mtu`）、`Topology`、只读 `probe_topology()` |
 | 进程 | `include/diesel/platform/net/process.hpp` | `ProcessRunner` 抽象 + `ExecProcessRunner`（不经过 shell） |
 | 后端 | `include/diesel/platform/net/backend.hpp` | `NetBackend`：ensure_bridge / set_slave / set_up / set_mtu / add_ipv4 / remove_ipv4 |
-| NM | `nm_backend.hpp` | `nmcli` 实现；slave profile 命名 `foray-<iface>-slave` |
+| NM | `nm_backend.hpp` | `nmcli` 实现；slave profile 命名 `diesel-<iface>-slave` |
 | netlink | `netlink_backend.hpp` | rtnetlink 实现，无 NM 时回退 |
 | 规划 | `setup.hpp` | `plan_link()` 纯函数 + `ensure_link()` 执行/回滚 + `select_backend()` |
 | 编排 | `bootstrap.hpp` | `bootstrap_link()`：探拓扑 → 判就绪 → 非 root 走 pkexec → 调 helper |
@@ -45,11 +45,11 @@ NetworkManager 凭据、巨帧 MTU、设备 IP 与主机端口。手工 `ip link
 ## 3. 特权边界
 
 - 不写 setuid 程序；root 权限只来自 polkit/pkexec；
-- `foray-net-helper` 安装到 `libexec`，参数只有
+- `diesel-net-helper` 安装到 `libexec`，参数只有
   iface/bridge/host-ip/prefix/mtu/allow-reassign-master，名字走白名单
   （`[A-Za-z0-9_.-]`、≤15 字符），IP 走 `Ipv4::parse`，MTU 限制 576–65535
   （576 = RFC 791 最小重组缓冲区，65535 = 16 位上限）；
-- polkit 动作 `org.foray.netconfig.bootstrap` 用 `exec.path` 注解把 pkexec
+- polkit 动作 `org.diesel.netconfig.bootstrap` 用 `exec.path` 注解把 pkexec
   限定到该 helper 一个程序；
 - 物理口必须是以太网口、不能是网桥本身；无线口只给 warning 不静默配置。
 
@@ -57,7 +57,7 @@ NetworkManager 凭据、巨帧 MTU、设备 IP 与主机端口。手工 `ip link
 
 ```bash
 # 只做自举（幂等，可反复跑）
-pkexec /usr/libexec/diesel_platform_core/foray-net-helper \
+pkexec /usr/libexec/diesel_platform_core/diesel-net-helper \
     --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51
 
 # 雷达：链路已就绪则跳过自举，否则自动经 pkexec 调 helper
@@ -107,7 +107,7 @@ diesel_hikvision_up --iface enp0s13f0u1 --dry-run
 ## 7. HIL 清单
 
 1. 雷达上电，`ethtool enp0s31f6` 显示 `Link detected: yes`、`Speed: 100Mb/s`；
-2. `pkexec ... foray-net-helper --iface enp0s31f6 --bridge br-lidar --host-ip <IP>`；
+2. `pkexec ... diesel-net-helper --iface enp0s31f6 --bridge br-lidar --host-ip <IP>`；
 3. `ip -brief addr show br-lidar` 为 `UP + LOWER_UP`；
 4. `diesel_livox_dump --host-ip <IP> --lidar-ip <雷达IP> --stream --frames 0` 看到点；
 5. 改雷达参数前先 `diesel_livox_config --dry-run` 读回，确认 IP 再下发；
