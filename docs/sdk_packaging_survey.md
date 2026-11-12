@@ -1,6 +1,6 @@
 # 厂商相机 SDK 打包与调用调研
 
-> 目的：在实现 `foray_platform_driver_hikvision` 之前，先看别的 RoboMaster 战队
+> 目的：在实现 `diesel_platform_driver_hikvision` 之前，先看别的 RoboMaster 战队
 > 把闭源相机 SDK（海康 MVS / 大恒 Galaxy / MindVision）怎么放进工程、怎么在
 > CMake 里找到、怎么在机器人上跑起来，用来校准本仓的 SDK 分发与接入方案。
 >
@@ -147,7 +147,7 @@ endforeach()
 ## 6. 与本仓方案的对照
 
 本仓当前做法（见 [`driver_hikvision.md` §10](driver_hikvision.md) 与
-`foray_ws/scripts/install_mvs_sdk.sh`）：
+`diesel_ws/scripts/install_mvs_sdk.sh`）：
 
 - 主库与头文件放组织私有仓 `ZQU-Foray/mvs-sdk`，元仓 `.repos` pin 到具体 commit；
 - `cmake/MVSConfig.cmake` 提供 `find_package(MVS)` + imported target `MVS::MvCameraControl`；
@@ -186,10 +186,10 @@ endforeach()
    官方包」的机器开箱即用，同时保持私有仓路径优先。
 2. **configure 期运行时自检**：`MVSConfig.cmake` 检测到 `libMvCameraControl.so` 但插件
    目录为空时给 `message(WARNING)`，把「能枚举但打不开」提前到构建期（`sp25_qdu_pi` 做法）。
-3. **rpath**：安装 `foray_platform` 时可设 `INSTALL_RPATH "$ORIGIN/../lib"`，减少对
+3. **rpath**：安装 `diesel_platform` 时可设 `INSTALL_RPATH "$ORIGIN/../lib"`，减少对
    `scripts/env.sh` 的依赖（`talos26` 做法）。
 4. **stub 回退**：无 SDK 时编译一个空实现的 `hikvision` 驱动，保证 CI 与跨平台开发可过；
-   本仓已有 `FORAY_BUILD_DRIVER_HIKVISION=OFF`，语义接近，暂不必做。
+   本仓已有 `DIESEL_BUILD_DRIVER_HIKVISION=OFF`，语义接近，暂不必做。
 5. **全 dlopen**（`shu_auto_aim_project` 做法）：可做到「无 SDK 也能启动、运行期才失败」。
    本仓已用 `detail::MvsApi` 虚接口隔离，换成 dlopen 只是替换实现层，但会失去编译期
    类型检查——**不采纳**，除非将来需要「同一二进制支持多厂商」。

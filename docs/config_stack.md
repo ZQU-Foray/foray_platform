@@ -1,27 +1,27 @@
 # 统一配置解析栈
 
-> 所属层：L1 平台基础 · 代码：`src/foray_platform_core/include/foray/platform/config/`
-> 归属：解析机制在 `foray_platform`；机器人相关配置值与装配在 `foray_robots`。
+> 所属层：L1 平台基础 · 代码：`src/diesel_platform_core/include/diesel/platform/config/`
+> 归属：解析机制在 `diesel_platform`；机器人相关配置值与装配在 `diesel_robots`。
 
-## 1. 为什么放在 `foray_platform`
+## 1. 为什么放在 `diesel_platform`
 
 组织文档的归属已经明确：
 
-- `foray_docs/repository_structure.md` §2：`foray_platform` 的内容包含「参数系统」；
+- `foray_docs/repository_structure.md` §2：`diesel_platform` 的内容包含「参数系统」；
 - `foray_docs/algorithm_structure.md` §1.7：L1 包含「参数系统（schema + 校验 + 热加载）」；
 - 同文档 §1 把「把 config 拆出独立仓」列为反模式——config 属于装配根；
-- `foray_robots` 拥有 `config/shared.yaml` + `config/<robot_type>.yaml`，负责注入配置。
+- `diesel_robots` 拥有 `config/shared.yaml` + `config/<robot_type>.yaml`，负责注入配置。
 
 因此：
 
 | 内容 | 归属 |
 |---|---|
-| YAML/JSON 解析、分层、校验、导出 | `foray_platform`（core target） |
-| 兵种/场景的具体值 | `foray_robots`（装配根） |
+| YAML/JSON 解析、分层、校验、导出 | `diesel_platform`（core target） |
+| 兵种/场景的具体值 | `diesel_robots`（装配根） |
 | 设备能力探测 | 驱动（`open()` 时） |
 
 未来若出现非 C++ 消费者需要稳定绑定、或配置栈需要独立发布节奏，
-再按组织判据 C1–C6 评估是否拆出 `foray_config`。
+再按组织判据 C1–C6 评估是否拆出 `diesel_config`。
 
 ## 2. 组成
 
@@ -35,7 +35,7 @@
 | `ConfigTool` | 便捷门面（CLI 与测试复用） |
 | `EnvProvider` | 环境变量抽象（进程环境 / 测试注入） |
 
-底层复用现有 `foray_platform_core::param` 的 `ParamSchema`、`ParamValue`、
+底层复用现有 `diesel_platform_core::param` 的 `ParamSchema`、`ParamValue`、
 `ParamStore`，不重复实现类型与范围校验。
 
 ## 3. 层与加载顺序
@@ -44,7 +44,7 @@
 shared.yaml        # 全兵种共享
   → <robot_type>.yaml
   → local/*.yaml   # 本机覆盖（.gitignore）
-  → FORAY_<PARAM>  # 环境变量覆盖层
+  → DIESEL_<PARAM>  # 环境变量覆盖层
 ```
 
 - 后加载覆盖先加载；
@@ -84,18 +84,18 @@ lidar:
 - 可整体替换（`serial: "${CAMERA_SERIAL}"`），也可嵌入字符串；
 - 替换后按 schema 的期望类型解析（例如 `width: "${WIDTH}"` 仍要求整数）。
 
-### 5.2 `FORAY_<PARAM>` 覆盖层
+### 5.2 `DIESEL_<PARAM>` 覆盖层
 
 在所有文件层之后，解析器按 schema 查找：
 
 ```text
-camera.width  ->  FORAY_CAMERA_WIDTH
-lidar.host_ip ->  FORAY_LIDAR_HOST_IP
+camera.width  ->  DIESEL_CAMERA_WIDTH
+lidar.host_ip ->  DIESEL_LIDAR_HOST_IP
 ```
 
 - 变量存在时覆盖文件值；
 - 类型/范围仍按 schema 校验；
-- provenance 记为 `env:FORAY_CAMERA_WIDTH`。
+- provenance 记为 `env:DIESEL_CAMERA_WIDTH`。
 
 ## 6. 来源追踪
 
@@ -104,7 +104,7 @@ lidar.host_ip ->  FORAY_LIDAR_HOST_IP
 ```cpp
 const ConfigSnapshot snapshot = ...;
 if (const std::string* source = snapshot.source("camera.width")) {
-    // /path/to/sentry.yaml 或 env:FORAY_CAMERA_WIDTH
+    // /path/to/sentry.yaml 或 env:DIESEL_CAMERA_WIDTH
 }
 ```
 
@@ -136,7 +136,7 @@ ConfigExporter::schema_json(schema);         // JSON Schema draft 2020-12
 ## 9. CLI
 
 `ConfigTool` 已提供 `validate` / `dump` / `schema_*` 的门面。
-可执行文件 `foray_config_tool` 需要真实 schema（HAL 的相机/雷达配置），
+可执行文件 `diesel_config_tool` 需要真实 schema（HAL 的相机/雷达配置），
 在 M6 之后落地；当前由单元测试覆盖。
 
 ## 10. 限制

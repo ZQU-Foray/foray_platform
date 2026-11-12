@@ -1,6 +1,6 @@
 # 驱动部署
 
-> 适用：`foray_platform_driver_livox`（已落地）· `foray_platform_driver_hikvision`（已落地）
+> 适用：`diesel_platform_driver_livox`（已落地）· `diesel_platform_driver_hikvision`（已落地）
 > 平台：Linux（x86_64 / aarch64）· CMake ≥ 3.16 · C++17
 
 ## 1. Livox SDK2
@@ -9,27 +9,27 @@
 
 - **不 fork、不 submodule、不 FetchContent**；
 - 版本 **v1.3.1**，commit `f5d9375f84efe2b15bc0a052d3e18482ed13adf4`；
-- 在 `foray_ws/.repos` 中 pin 到 `third_party/livox_sdk2`（`src/` 之外）；
-- 源码由 vcstool 拉取，不进仓库；构建安装由 `foray_ws/scripts` 完成；
+- 在 `diesel_ws/.repos` 中 pin 到 `third_party/livox_sdk2`（`src/` 之外）；
+- 源码由 vcstool 拉取，不进仓库；构建安装由 `diesel_ws/scripts` 完成；
 - 只有必须修改上游时才 fork `Livox-SDK2-foray-fork` 并记录 patch。
 
 ### 1.2 开发机：拉取与构建
 
 ```bash
-cd foray_ws
+cd diesel_ws
 source scripts/env.sh
 scripts/import_repos.sh          # 拉取 third_party/livox_sdk2
 scripts/build_livox_sdk2.sh      # 构建并安装到本地前缀
 ```
 
-默认前缀：`~/.cache/foray-platform-prefix/livox-sdk2`。
+默认前缀：`~/.cache/diesel-platform-prefix/livox-sdk2`。
 
 脚本等价的 CMake 参数（v1.3.1 的兼容处理）：
 
 ```bash
 cmake -S third_party/livox_sdk2 -B ~/.cache/foray-build/livox-sdk2 \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX="$HOME/.cache/foray-platform-prefix/livox-sdk2" \
+      -DCMAKE_INSTALL_PREFIX="$HOME/.cache/diesel-platform-prefix/livox-sdk2" \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_CXX_FLAGS="-include cstdint"
 cmake --build ~/.cache/foray-build/livox-sdk2 -j"$(nproc)"
@@ -56,12 +56,12 @@ cmake --install ~/.cache/foray-build/livox-sdk2
 
 ```bash
 # 开发机真实后端
-cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/diesel_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
-      -DFORAY_BUILD_DRIVER_LIVOX=ON \
-      -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
-      -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2"
+      -DCMAKE_PREFIX_PATH="$HOME/.cache/diesel-platform-prefix" \
+      -DDIESEL_BUILD_DRIVER_LIVOX=ON \
+      -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
+      -DLIVOX_SDK2_ROOT="$HOME/.cache/diesel-platform-prefix/livox-sdk2"
 cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
 ctest --test-dir ~/.cache/foray-platform-build/livox-on --output-on-failure
 ```
@@ -69,32 +69,32 @@ ctest --test-dir ~/.cache/foray-platform-build/livox-on --output-on-failure
 - ON 时找不到 SDK：`FATAL_ERROR`，不静默退回 stub；
 - 只接受 `liblivox_lidar_sdk_shared.so`；找到静态库直接失败；
 - OFF 时仍构建库与工厂，`open()` 返回 `kSdkUnavailable`；
-- 安装后的 target 导出 `FORAY_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
-  `#if FORAY_DRIVER_LIVOX_HAS_SDK`（不能 `#ifdef`）；
+- 安装后的 target 导出 `DIESEL_DRIVER_LIVOX_HAS_SDK=0/1`，下游用
+  `#if DIESEL_DRIVER_LIVOX_HAS_SDK`（不能 `#ifdef`）；
 - 静态驱动库的下游链接时需在自身构建中设置 `LIVOX_SDK2_ROOT`，或把 SDK
   前缀加入 `CMAKE_PREFIX_PATH`；包 Config 会用 `find_dependency(LivoxSDK2)` 重新定位。
 
 ### 1.4 实机部署
 
 - 镜像构建时从 `.repos` pin 的 commit 构建 SDK，安装到
-  **`/opt/foray/livox-sdk2`**；
+  **`/opt/diesel/livox-sdk2`**；
 - 镜像只保留安装产物，不保留 SDK 源码/构建目录；
 - 运行时库路径二选一：
 
 ```bash
 # 系统级
-echo "/opt/foray/livox-sdk2/lib" | sudo tee /etc/ld.so.conf.d/foray-livox-sdk2.conf
+echo "/opt/diesel/livox-sdk2/lib" | sudo tee /etc/ld.so.conf.d/foray-livox-sdk2.conf
 sudo ldconfig
 
 # 会话级
-export LD_LIBRARY_PATH=/opt/foray/livox-sdk2/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/opt/diesel/livox-sdk2/lib:$LD_LIBRARY_PATH
 ```
 
 构建：
 
 ```bash
-FORAY_LIVOX_SDK2_PREFIX=/opt/foray/livox-sdk2 source foray_ws/scripts/env.sh
-FORAY_LIVOX_SDK=ON foray_ws/scripts/colcon_build.sh
+DIESEL_LIVOX_SDK2_PREFIX=/opt/diesel/livox-sdk2 source diesel_ws/scripts/env.sh
+DIESEL_LIVOX_SDK=ON diesel_ws/scripts/colcon_build.sh
 ```
 
 或直接传 colcon 参数：
@@ -103,9 +103,9 @@ FORAY_LIVOX_SDK=ON foray_ws/scripts/colcon_build.sh
 colcon build --base-paths src --symlink-install \
   --cmake-args \
     -DCMAKE_BUILD_TYPE=Release \
-    -DFORAY_BUILD_DRIVER_LIVOX=ON \
-    -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
-    -DLIVOX_SDK2_ROOT=/opt/foray/livox-sdk2
+    -DDIESEL_BUILD_DRIVER_LIVOX=ON \
+    -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
+    -DLIVOX_SDK2_ROOT=/opt/diesel/livox-sdk2
 ```
 
 验证：
@@ -113,7 +113,7 @@ colcon build --base-paths src --symlink-install \
 ```bash
 ldconfig -p | grep livox_lidar_sdk_shared
 # 最终库为共享库时：
-ldd install/foray_platform_driver_livox/lib/libforay_platform_driver_livox.so | grep livox
+ldd install/diesel_platform_driver_livox/lib/libdiesel_platform_driver_livox.so | grep livox
 # 最终库为静态库时，对实际可执行文件执行 ldd
 ```
 
@@ -142,7 +142,7 @@ profile（掉电重启也保留）：
 
 ```bash
 # 一次性安装 polkit 动作后，普通用户即可授权执行（见 §2.2.1）
-pkexec /usr/libexec/foray_platform/foray-net-helper \
+pkexec /usr/libexec/diesel_platform/foray-net-helper \
     --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51
 ip -brief addr show br-lidar      # 期望 UP + LOWER_UP + 192.168.1.51/24
 ```
@@ -159,7 +159,7 @@ MTU 不小于 master，helper 会先设物理口再设网桥；失败只 warning
 
 ```bash
 # 例：把相机口从旧桥迁到 br-camera（会先从旧桥摘下）
-pkexec /usr/libexec/foray_platform/foray-net-helper \
+pkexec /usr/libexec/diesel_platform/foray-net-helper \
     --iface enp0s13f0u1 --bridge br-camera --host-ip 169.254.114.1 \
     --mtu 9014 --allow-reassign-master
 ```
@@ -208,7 +208,7 @@ helper 仍可工作；此时 `applied:` 走内核 netlink，不会创建 NM prof
 网络与驱动都有各自的工具，实战时用一条命令串起来：
 
 ```bash
-foray_lidar_up --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51 \
+diesel_lidar_up --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51 \
                --lidar-ip 192.168.1.195 --frames 3
 ```
 
@@ -217,7 +217,7 @@ foray_lidar_up --iface enp0s31f6 --bridge br-lidar --host-ip 192.168.1.51 \
   `seq/points/dropped/sync` 与统计；
 - 加 `--dry-run` 只经 helper 打印 `planned:` 计划并跳过驱动，适合现场先看会改什么；
 - 退出码：0 成功 / 1 用法 / 2 驱动创建 / 3 open / 4 start / 5 网络自举 / 6 没读到帧；
-- 要点云落盘或流式输出，继续用 `foray_livox_dump`。
+- 要点云落盘或流式输出，继续用 `diesel_livox_dump`。
 
 ### 2.5 发现与验证
 
@@ -259,18 +259,18 @@ PTP 同步后 `time_type=1`，HAL 标记 `kPtp`，`base_time` 可直接作为绝
 
 ## 4. Hikvision MVS
 
-驱动已落地（`foray_platform_driver_hikvision`，2026-10-24）。
+驱动已落地（`diesel_platform_driver_hikvision`，2026-10-24）。
 
 SDK 来源是组织私有仓 [`ZQU-Foray/mvs-sdk`](https://github.com/ZQU-Foray/mvs-sdk)
 （SDK V4.8.0.3，`MV_CC_GetSDKVersion()` = `0x04080003`，**只提供 x86-64 主库**）：
 
 ```bash
 # 1. 元仓拉取 + 安装到私有前缀（不使用分支，按 commit pin）
-foray_ws/scripts/import_repos.sh
-foray_ws/scripts/install_mvs_sdk.sh --package <海康官方包>
+diesel_ws/scripts/import_repos.sh
+diesel_ws/scripts/install_mvs_sdk.sh --package <海康官方包>
 
 # 2. 或在已有 SDK 的机器上直接指向 /opt/MVS
-cmake -S . -B build -DFORAY_BUILD_DRIVER_HIKVISION=ON -DFORAY_MVS_ROOT=/opt/MVS
+cmake -S . -B build -DDIESEL_BUILD_DRIVER_HIKVISION=ON -DDIESEL_MVS_ROOT=/opt/MVS
 ```
 
 要点：
@@ -288,9 +288,9 @@ cmake -S . -B build -DFORAY_BUILD_DRIVER_HIKVISION=ON -DFORAY_MVS_ROOT=/opt/MVS
 - **主机双地址会导致同一相机被枚举两次**（实测 `169.254.114.1/16` 与
   `192.168.1.51/24` 并存时 `nDeviceNum=2`）：驱动按 serial 去重，不必手动删地址；
 - USB3 硬件触发接 6-pin P7：pin 2 `OPTO_IN+`、pin 5 `OPTO_GND`（5–24 V）；
-- 验证：`FORAY_HIKVISION_BUILD_TOOLS=ON` 后跑
-  `foray_hikvision_dump <serial> --frames 200`，看「收/交付/丢弃/超时/SDK 错误」；
-- 一键自举：`foray_hikvision_up --iface enp0s13f0u1 --bridge br-camera --frames 3`
+- 验证：`DIESEL_HIKVISION_BUILD_TOOLS=ON` 后跑
+  `diesel_hikvision_dump <serial> --frames 200`，看「收/交付/丢弃/超时/SDK 错误」；
+- 一键自举：`diesel_hikvision_up --iface enp0s13f0u1 --bridge br-camera --frames 3`
   自动完成挂桥 → 主机地址（LLA 推导）→ 巨帧 MTU → 枚举 → 取帧；相机已是
   `br-camera` slave 且地址在位时跳过网络步骤（`--dry-run` 只打印计划）；
 - USB3 Vision 的协议级自举尚未实现：`--transport usb3` 只枚举并打印设备与
@@ -309,12 +309,12 @@ cmake -S . -B build -DFORAY_BUILD_DRIVER_HIKVISION=ON -DFORAY_MVS_ROOT=/opt/MVS
 
 Hikvision：
 
-- [ ] `foray_hikvision_dump <serial> --frames 200` 丢包/超时/SDK 错误均为 0
+- [ ] `diesel_hikvision_dump <serial> --frames 200` 丢包/超时/SDK 错误均为 0
 - [ ] `ldd` 看 core 测试不出现 `libMvCameraControl`（mock 分支隔离生效）
 - [ ] 曝光/增益下发后帧内回报与给定值一致（`--exposure-us` / `--gain-db`）
 - [ ] 软触发模式逐帧出图（`--trigger-software`）
 - [ ] 拔插恢复：异常回调 → `kError` → `recover()` 能重新取流
-- [ ] `foray_hikvision_up --iface <口> --frames 3` 无手工配网即出帧
+- [ ] `diesel_hikvision_up --iface <口> --frames 3` 无手工配网即出帧
 - [ ] `ip -brief addr show br-camera` 的 MTU 为 9014（或 warning 给出实际值）
 - [ ] 相机口与雷达口分属 `br-camera` / `br-lidar`，互不抢 slave
 

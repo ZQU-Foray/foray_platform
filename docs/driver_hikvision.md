@@ -1,6 +1,6 @@
-# Hikvision 驱动（foray_platform_driver_hikvision）接入与封装
+# Hikvision 驱动（diesel_platform_driver_hikvision）接入与封装
 
-> 状态：**已落地（M7/M8，2026-10-24）**。`src/foray_platform_driver_hikvision/` 代码、
+> 状态：**已落地（M7/M8，2026-10-24）**。`src/diesel_platform_driver_hikvision/` 代码、
 > 81 个 mock 单测与 MV-CS004-10GC 实机取流均已验证；§12 列出仍缺的 HAL 能力，
 > §13/§14 记录实机核对结果与未做的验证项。
 > 与 `hal_sensor_driver_research.md` §4 的关系：那里回答「海康 SDK 长什么样」，
@@ -10,11 +10,11 @@
 
 1. **SDK 隔离方式沿用 Livox**：驱动只依赖 `detail::MvsApi` 抽象接口，
    `src/hikvision/mvs_api_real.cpp` 是唯一 include `MvCameraControl.h` 的翻译单元；
-   公共头 `include/foray/platform/driver/hikvision/camera.hpp` 只出现 HAL 类型。
+   公共头 `include/diesel/platform/driver/hikvision/camera.hpp` 只出现 HAL 类型。
 2. **取流模型与 Livox 不同但更简单**：海康没有「SDK 回调线程」，`MV_CC_GetImageBuffer`
    是阻塞调用，因此**取流线程本身就是生产者**，不需要原始包环与解析线程；
    链路为 `GetImageBuffer → memcpy 到 FramePool → FreeImageBuffer`（同线程）。
-3. **目标拆成 core/backend 两个 OBJECT 库**：`FORAY_BUILD_DRIVER_HIKVISION=OFF`
+3. **目标拆成 core/backend 两个 OBJECT 库**：`DIESEL_BUILD_DRIVER_HIKVISION=OFF`
    时 backend 换成 stub，mock 测试只链 core，不引入 MVS 头文件与 `libMvCameraControl`。
 4. **像素格式不做转换**：HAL 只交出 8 位 Mono/Bayer 原始平面，Bayer→RGB 留给视觉层。
    当前 `hal::is_supported_pixel_format()`（types.hpp:210）已把这个范围钉死。
@@ -28,13 +28,13 @@
 ## 2. 包结构
 
 ```text
-src/foray_platform_driver_hikvision/
+src/diesel_platform_driver_hikvision/
 ├── CMakeLists.txt
 ├── package.xml
 ├── cmake/
 │   ├── FindMVS.cmake
-│   └── foray_platform_driver_hikvisionConfig.cmake.in
-├── include/foray/platform/driver/hikvision/
+│   └── diesel_platform_driver_hikvisionConfig.cmake.in
+├── include/diesel/platform/driver/hikvision/
 │   └── camera.hpp                 # make_camera()，无 SDK 类型
 ├── src/hikvision/
 │   ├── camera_impl.hpp            # CameraImpl 声明（对测试可见，struct 直接 new）
@@ -61,13 +61,13 @@ src/foray_platform_driver_hikvision/
 公共头（与 Livox 同构）：
 
 ```cpp
-namespace foray::platform::driver::hikvision {
+namespace diesel::platform::driver::hikvision {
 
 /**
  * @brief 创建一个海康 MVS 工业相机。
  *
  * 返回的 `hal::Camera` 在 `open()` 时才枚举设备并配置节点；
- * 编译期未启用 SDK（`FORAY_BUILD_DRIVER_HIKVISION=OFF`）时，`open()` 返回
+ * 编译期未启用 SDK（`DIESEL_BUILD_DRIVER_HIKVISION=OFF`）时，`open()` 返回
  * `ErrorCode::kSdkUnavailable`，其余接口按 HAL 状态机返回 `kNotOpen`。
  *
  * @param config HAL 相机配置；`selector` 至少要给出 serial、user_defined_name、
@@ -75,14 +75,14 @@ namespace foray::platform::driver::hikvision {
  */
 Result<std::unique_ptr<hal::Camera>> make_camera(const hal::CameraConfig& config);
 
-} // namespace foray::platform::driver::hikvision
+} // namespace diesel::platform::driver::hikvision
 ```
 
 ## 3. SDK 隔离：`detail::MvsApi`
 
 `mvs_api.hpp` 只 include `hal` 与 `result`，**不** include MVS 头。句柄用不透明的
 `void*`：它不是 SDK 公开类型，只是指针，公共头仍然看不到 MVS。
-（下述代码块位于 `namespace foray::platform::driver::hikvision::detail`，
+（下述代码块位于 `namespace diesel::platform::driver::hikvision::detail`，
 其中 `PixelFormat` / `Transport` 是 `using hal::...` 引入的名字。）
 
 ```cpp
@@ -437,15 +437,15 @@ MVS 侧可用信息：
 
 ## 10. 构建与部署
 
-- `option(FORAY_BUILD_DRIVER_HIKVISION "..." OFF)`：默认 OFF（与 Livox 一致）。
+- `option(DIESEL_BUILD_DRIVER_HIKVISION "..." OFF)`：默认 OFF（与 Livox 一致）。
 - **SDK 来源**：组织私有仓 [`ZQU-Foray/mvs-sdk`](https://github.com/ZQU-Foray/mvs-sdk)
   （pin commit `b55df46`，SDK V4.8.0.3，`MV_CC_GetSDKVersion()` = `0x04080003`），
   含 `include/` 7 头 + `lib/amd64` 主库（x86-64 only，实车与开发机均为 x86_64）
   + `find_package(MVS CONFIG)` 包
   + `scripts/{install,install-plugins,make-bundle,verify}.sh`。取得方式（择一）：
-  - **元仓一键**：`foray_ws/scripts/import_repos.sh` 拉取 `third_party/mvs_sdk`
+  - **元仓一键**：`diesel_ws/scripts/import_repos.sh` 拉取 `third_party/mvs_sdk`
     （`.repos` pin commit，**不使用分支**，同 Livox 范式），再
-    `foray_ws/scripts/install_mvs_sdk.sh --package <海康官方包>` 装到私有前缀；
+    `diesel_ws/scripts/install_mvs_sdk.sh --package <海康官方包>` 装到私有前缀；
   - `scripts/install.sh --prefix <p>` 后 `-DCMAKE_PREFIX_PATH=<p>`；
   - `-DMVS_ROOT=<克隆目录>` 直接指向仓库根。
   传输层插件（`libMvUsb3vTL.so` / `libMVGigEVisionSDK.so` 等）**不入库**：
@@ -454,20 +454,20 @@ MVS 侧可用信息：
   需要离线分发时用 `scripts/make-bundle.sh` 打成
   `mvs-sdk-<ver>-linux-<arch>.tar.gz` + `.sha256`（包内 `bin/install.sh` 直接可装）。
   udev 规则与客户端工具仍只来自官方安装包。
-- `FORAY_MVS_ROOT`：SDK 根目录；`FindMVS.cmake` 用
+- `DIESEL_MVS_ROOT`：SDK 根目录；`FindMVS.cmake` 用
   `find_path(MvCameraControl.h)` + `find_library(MvCameraControl)`，
   `PATH_SUFFIXES include include/hikrobot lib/64 lib/amd64 lib/aarch64 lib/arm64`，
   产出 `MVS::MvCameraControl` IMPORTED 目标。
-- `FORAY_BUILD_DRIVER_HIKVISION=ON` 但找不到 SDK → `FATAL_ERROR`，不静默降级。
+- `DIESEL_BUILD_DRIVER_HIKVISION=ON` 但找不到 SDK → `FATAL_ERROR`，不静默降级。
 - `FindMVS.cmake` 先看 `TARGET MVS::MvCameraControl` 是否已存在，再
   `find_package(MVS CONFIG QUIET)`，最后才走上面的 `find_path`/`find_library` 兜底；
   因此与 `mvs-sdk` 仓自带的 `MVSConfig.cmake` **同名同签名、可无缝互换**。
-- `FORAY_HIKVISION_BUILD_TOOLS=ON`（要求 `FORAY_BUILD_DRIVER_HIKVISION=ON`）
-  额外构建 `foray_hikvision_dump`。
-- 目标拆分同 Livox：`foray_hikvision_core_objects`（无 SDK 依赖）+
-  `foray_hikvision_backend_objects`（ON 时 `mvs_api_real.cpp`，OFF 时 `mvs_api_stub.cpp`），
-  合成 `foray_platform_driver_hikvision`，ALIAS `foray_platform::driver_hikvision`，
-  导出 `FORAY_DRIVER_HIKVISION_HAS_SDK=0/1`；
+- `DIESEL_HIKVISION_BUILD_TOOLS=ON`（要求 `DIESEL_BUILD_DRIVER_HIKVISION=ON`）
+  额外构建 `diesel_hikvision_dump`。
+- 目标拆分同 Livox：`diesel_hikvision_core_objects`（无 SDK 依赖）+
+  `diesel_hikvision_backend_objects`（ON 时 `mvs_api_real.cpp`，OFF 时 `mvs_api_stub.cpp`），
+  合成 `diesel_platform_driver_hikvision`，ALIAS `diesel_platform::driver_hikvision`，
+  导出 `DIESEL_DRIVER_HIKVISION_HAS_SDK=0/1`；
   静态库时通过 Config.cmake.in 的 `find_dependency(MVS)` 重定位。
 - 部署（补进 `driver_deployment.md` §4）：
   - MVS 安装包提供 `/opt/MVS` 与 udev 规则，普通用户权限依赖它；
@@ -476,7 +476,7 @@ MVS 侧可用信息：
 
 ## 11. 测试
 
-`foray_platform_driver_hikvision_tests`（只链 core + mock，**不需要 SDK/硬件**）：
+`diesel_platform_driver_hikvision_tests`（只链 core + mock，**不需要 SDK/硬件**）：
 
 - `camera_test`：完整生命周期、`open` 幂等、`start` 幂等、`close` 幂等且
   `DestroyHandle` 必调、`recover` 退避次数、异常回调置 `kError`；
@@ -488,12 +488,12 @@ MVS 侧可用信息：
   `lost_packets`/`exposure_time_us`/`gain_db`/`trigger_index` 透传、
   `get_frame`/`free_frame` 配对（mock 统计未归还次数为 0）、帧池无槽位计数。
 
-`foray_platform_driver_hikvision_backend_tests`：
+`diesel_platform_driver_hikvision_backend_tests`：
 
 - OFF：公共工厂 `open()` → `kSdkUnavailable`；
 - ON：只验证真实后端可构造，不打开设备。
 
-当前共 **81 个用例**，`FORAY_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全部通过：
+当前共 **81 个用例**，`DIESEL_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全部通过：
 
 | 套件 | 用例数 | 覆盖 |
 |---|---|---|
@@ -503,10 +503,10 @@ MVS 侧可用信息：
 | `HikvisionError` | 6 | `MV_E_*` → `ErrorCode`、vendor_code 位保真 |
 | `HikvisionBackend` | 1 | OFF 报 `kSdkUnavailable` / ON 只构造 |
 
-`foray_hikvision_dump`（`FORAY_HIKVISION_BUILD_TOOLS=ON`）：配置 + 取 N 帧，
+`diesel_hikvision_dump`（`DIESEL_HIKVISION_BUILD_TOOLS=ON`）：配置 + 取 N 帧，
 逐帧打印 `width×height`/`stride`/`sequence`/`device_frame_number`/
 `exposure_time_us`/`gain_db`/`sync`/`lost_packets`，结尾打印帧率与
-`foray_platform::hal::SensorStats` 全量计数；`--trigger-software` 走「先 trigger
+`diesel_platform::hal::SensorStats` 全量计数；`--trigger-software` 走「先 trigger
 再 read」的软触发循环。
 
 `--view`（构建期 `find_package(SDL2 QUIET)` 找到 SDL2 才编译进 `apps/viewer.cpp`）
@@ -570,7 +570,7 @@ HIL 验收（2026-10-24，MV-CS004-10GC / `DB0985207` / `169.254.114.9`）：
 - `device_to_host_offset_ns` / `exposure_to_host_latency_ns` → `timestamp.cpp` 的
   `TimestampConfig`，`apply()` 可在运行期热改；
 - `trigger.debounce_us` → `LineDebouncerTime`，内层空值写 0；
-- `Camera::trigger()` → `MV_CC_TriggerSoftwareExecute`，`foray_hikvision_dump
+- `Camera::trigger()` → `MV_CC_TriggerSoftwareExecute`，`diesel_hikvision_dump
   --trigger-software` 已实机验证。
 
 仍缺（属 HAL 公共 API 变更，需单独决策留痕）：

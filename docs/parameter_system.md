@@ -1,7 +1,7 @@
 # 参数系统
 
 > 所属层：L1 平台基础 · 对应横切面：X4 可观测与调参
-> 代码：`src/foray_platform_core/include/foray/platform/param/`
+> 代码：`src/diesel_platform_core/include/diesel/platform/param/`
 
 ## 1. 目标
 
@@ -23,7 +23,7 @@ ParamManager  schema + 多来源分层 + 初始加载 / 热加载门面
 ## 3. 声明参数
 
 ```cpp
-using namespace foray::platform::param;
+using namespace diesel::platform::param;
 
 ParamSchema schema;
 

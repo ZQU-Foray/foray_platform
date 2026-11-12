@@ -3,8 +3,8 @@
 #
 # CI 据此校验：
 #   - 不得依赖比 layer 更高的层
-#   - 不得依赖装配根仓 foray_robots
-#   - foray_interfaces 不得依赖任何自研仓
+#   - 不得依赖装配根仓 diesel_robots
+#   - diesel_interfaces 不得依赖任何自研仓
 
 layer: L1
 depends_on_layers: [X2]

@@ -1,7 +1,7 @@
 # 相机配置架构：键空间、分级与动态参数
 
-> 适用范围：`foray_platform_core` 包的 HAL 相机层，以及 `foray_platform_driver_livox` /
-> `foray_platform_driver_hikvision` 两个驱动包。
+> 适用范围：`diesel_platform_core` 包的 HAL 相机层，以及 `diesel_platform_driver_livox` /
+> `diesel_platform_driver_hikvision` 两个驱动包。
 > 目标读者：上游 `robots` 仓的配置编写者、驱动实现者。
 
 ## 1. 目标
@@ -283,7 +283,7 @@ foray-platform camera-tune --key camera.exposure_us --value 2500
 - [x] `Camera` 接口：`apply()` 与 `supported_keys()`
 - [x] `config_binder.cpp`：40 个键的 schema 与赋值 + 交叉校验
 - [x] `param/manager`：`add_change_listener` / `remove_change_listener`
-- [x] `foray_platform_driver_hikvision`：MVS 节点映射与 `apply` 实现
+- [x] `diesel_platform_driver_hikvision`：MVS 节点映射与 `apply` 实现
 - [x] `docs/driver_hikvision.md` §6 改为指向本文
 
 驱动侧的实际消费情况（节点名、`0` 值语义、`apply()` 的内层空值含义）见

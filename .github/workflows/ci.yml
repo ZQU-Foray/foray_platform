@@ -140,7 +140,7 @@ jobs:
         id: detect
         shell: bash
         run: |
-          if [ -f foray_platform/CMakeLists.txt ]; then
+          if [ -f diesel_platform/CMakeLists.txt ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
@@ -161,16 +161,16 @@ jobs:
           PREFIX="$PWD/build/cmake-prefix"
 
           # 合并包：core + hal 一次构建/测试/安装
-          cmake -S foray_platform -B build/platform \
+          cmake -S diesel_platform -B build/platform \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-            -DFORAY_PLATFORM_BUILD_TESTS=ON
+            -DDIESEL_PLATFORM_BUILD_TESTS=ON
           cmake --build build/platform -j"$(nproc)"
           ctest --test-dir build/platform --output-on-failure
           cmake --install build/platform
 
           # 驱动包：SDK 默认 OFF，逐个探测；不存在则跳过
-          for pkg in foray_platform_driver_livox foray_platform_driver_hikvision; do
+          for pkg in diesel_platform_driver_livox diesel_platform_driver_hikvision; do
             if [ ! -f "$pkg/CMakeLists.txt" ]; then
               echo "跳过 $pkg（尚未落地）"
               continue
@@ -179,9 +179,9 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$PREFIX" \
               -DCMAKE_PREFIX_PATH="$PREFIX" \
-              -DFORAY_PLATFORM_BUILD_TESTS=ON \
-              -DFORAY_BUILD_DRIVER_HIKVISION=OFF \
-              -DFORAY_BUILD_DRIVER_LIVOX=OFF
+              -DDIESEL_PLATFORM_BUILD_TESTS=ON \
+              -DDIESEL_BUILD_DRIVER_HIKVISION=OFF \
+              -DDIESEL_BUILD_DRIVER_LIVOX=OFF
             cmake --build "build/$pkg" -j"$(nproc)"
             ctest --test-dir "build/$pkg" --output-on-failure
             cmake --install "build/$pkg"
@@ -192,7 +192,7 @@ jobs:
   build-cmake-livox-sdk:
     runs-on: ubuntu-22.04
     env:
-      # 必须与 foray_ws/.repos 中的 pin 保持一致。
+      # 必须与 diesel_ws/.repos 中的 pin 保持一致。
       LIVOX_SDK2_COMMIT: f5d9375f84efe2b15bc0a052d3e18482ed13adf4
     steps:
       - uses: actions/checkout@v4
@@ -201,7 +201,7 @@ jobs:
         id: detect
         shell: bash
         run: |
-          if [ -f foray_platform_driver_livox/CMakeLists.txt ]; then
+          if [ -f diesel_platform_driver_livox/CMakeLists.txt ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
@@ -235,16 +235,16 @@ jobs:
           cmake --build "$RUNNER_TEMP/livox-sdk2-build" -j"$(nproc)"
           cmake --install "$RUNNER_TEMP/livox-sdk2-build"
 
-      - name: Build and install foray_platform
+      - name: Build and install diesel_platform
         if: steps.detect.outputs.found == 'true'
         shell: bash
         run: |
           set -euo pipefail
           PREFIX="$RUNNER_TEMP/foray-prefix"
-          cmake -S foray_platform -B build/platform \
+          cmake -S diesel_platform -B build/platform \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-            -DFORAY_PLATFORM_BUILD_TESTS=ON
+            -DDIESEL_PLATFORM_BUILD_TESTS=ON
           cmake --build build/platform -j"$(nproc)"
           ctest --test-dir build/platform --output-on-failure
           cmake --install build/platform
@@ -255,14 +255,14 @@ jobs:
         run: |
           set -euo pipefail
           PREFIX="$RUNNER_TEMP/foray-prefix"
-          cmake -S foray_platform_driver_livox -B build/livox-on \
+          cmake -S diesel_platform_driver_livox -B build/livox-on \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PREFIX" \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-            -DFORAY_BUILD_DRIVER_LIVOX=ON \
-            -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
+            -DDIESEL_BUILD_DRIVER_LIVOX=ON \
+            -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
             -DLIVOX_SDK2_ROOT="$RUNNER_TEMP/livox-sdk2-prefix" \
-            -DFORAY_PLATFORM_BUILD_TESTS=ON
+            -DDIESEL_PLATFORM_BUILD_TESTS=ON
           cmake --build build/livox-on -j"$(nproc)"
           LD_LIBRARY_PATH="$RUNNER_TEMP/livox-sdk2-prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             ctest --test-dir build/livox-on --output-on-failure
@@ -273,8 +273,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CORE_TESTS=build/livox-on/foray_platform_driver_livox_tests
-          BACKEND_TESTS=build/livox-on/foray_platform_driver_livox_backend_tests
+          CORE_TESTS=build/livox-on/diesel_platform_driver_livox_tests
+          BACKEND_TESTS=build/livox-on/diesel_platform_driver_livox_backend_tests
 
           if ldd "$CORE_TESTS" | grep -q livox_lidar_sdk; then
             echo "core 测试不应链接 Livox SDK" >&2
@@ -345,7 +345,7 @@ jobs:
           echo "目录规范校验通过"
 
   # ---- ROS 2 构建与测试 ----
-  # 适用于 colcon 工作空间仓库（如 foray_navigation）。
+  # 适用于 colcon 工作空间仓库（如 diesel_navigation）。
   # 仓库内不存在 package.xml 时整个作业自动跳过，故可安全保留在通用模板里。
   build-ros2:
     runs-on: ubuntu-22.04
@@ -379,8 +379,8 @@ jobs:
           source /opt/ros/humble/setup.bash
           colcon build --symlink-install --cmake-args \
             -DCMAKE_BUILD_TYPE=Release \
-            -DFORAY_BUILD_DRIVER_HIKVISION=OFF \
-            -DFORAY_BUILD_DRIVER_LIVOX=OFF
+            -DDIESEL_BUILD_DRIVER_HIKVISION=OFF \
+            -DDIESEL_BUILD_DRIVER_LIVOX=OFF
 
       - name: 测试 (colcon test)
         if: steps.detect.outputs.found == 'true'

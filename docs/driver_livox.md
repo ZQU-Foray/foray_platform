@@ -1,23 +1,23 @@
-# Livox 驱动（foray_platform_driver_livox）
+# Livox 驱动（diesel_platform_driver_livox）
 
-> 依赖：`foray_platform::hal` · Livox SDK2 v1.3.1（可选）
+> 依赖：`diesel_platform::hal` · Livox SDK2 v1.3.1（可选）
 > 目标机型：Mid-360 / Mid-360s（4 线）、HAP（6 线）
 
 ## 1. 包结构
 
 ```text
-src/foray_platform_driver_livox/
+src/diesel_platform_driver_livox/
 ├── cmake/
 │   ├── FindLivoxSDK2.cmake     暴露 LivoxSDK2::shared
-│   └── foray_platform_driver_livoxConfig.cmake.in
-├── include/foray/platform/driver/livox/lidar.hpp   公共工厂（无 SDK 类型）
+│   └── diesel_platform_driver_livoxConfig.cmake.in
+├── include/diesel/platform/driver/livox/lidar.hpp   公共工厂（无 SDK 类型）
 ├── src/livox/
 │   ├── lidar.cpp               生命周期、配置、取流线程（核心对象）
 │   ├── lidar_impl.hpp
 │   ├── lidar_public_factory.cpp 公共 make_lidar（后端对象）
 │   ├── livox_runtime.cpp/.hpp  进程级 SDK 单例、handle 路由、回调接收器
 │   ├── livox_api.hpp           SDK 函数表抽象
-│   ├── livox_api_real.cpp      真实 SDK（仅 FORAY_BUILD_DRIVER_LIVOX=ON）
+│   ├── livox_api_real.cpp      真实 SDK（仅 DIESEL_BUILD_DRIVER_LIVOX=ON）
 │   ├── livox_api_stub.cpp      stub（默认，open 返回 kSdkUnavailable）
 │   ├── packet_parser.cpp/.hpp  36 字节头 + 点/IMU 解析
 │   ├── frame_assembler.cpp/.hpp frame_cnt 组帧、逐点时间、帧池写入
@@ -31,10 +31,10 @@ src/foray_platform_driver_livox/
 
 构建目标：
 
-- `foray_livox_core_objects`：协议、运行时、组帧、JSON，**不链接 SDK**；
-- `foray_livox_backend_objects`：`livox_api_real.cpp` 或 `livox_api_stub.cpp`；
+- `diesel_livox_core_objects`：协议、运行时、组帧、JSON，**不链接 SDK**；
+- `diesel_livox_backend_objects`：`livox_api_real.cpp` 或 `livox_api_stub.cpp`；
 - 最终库 = core + backend；mock 测试只链 core，因此任何开关下都不需要 SDK；
-- `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT` 决定 `FindLivoxSDK2.cmake` 的搜索范围。
+- `DIESEL_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT` 决定 `FindLivoxSDK2.cmake` 的搜索范围。
 
 ## 2. 线程模型
 
@@ -148,7 +148,7 @@ Livox SDK2 的 `LivoxLidarSdkInit/Uninit` 是**进程级单例**，不能并发�
 - 默认使用**单播**（不写 `multicast_ip`）；需要组播时在自定义 JSON 中加入
   `multicast_ip`，并确保主机加入该组播组、网桥允许转发；
 - 端口取 Livox-SDK2 v1.3.1 sample 默认值；
-- 文件权限 `0600`，目录默认 `$XDG_RUNTIME_DIR/foray_livox`；
+- 文件权限 `0600`，目录默认 `$XDG_RUNTIME_DIR/diesel_livox`；
 - 生成前检查 `host_ip` 是本机网卡地址；自定义 JSON 时跳过该检查；
 - 多雷达共用一个 host 配置，SDK 按 handle 区分数据来源。
 
@@ -187,7 +187,7 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 
 两个测试可执行文件，合计 30 个用例：
 
-- `foray_platform_driver_livox_tests`（29 个，只链 core + mock，不需要 SDK/硬件）：
+- `diesel_platform_driver_livox_tests`（29 个，只链 core + mock，不需要 SDK/硬件）：
   - `packet_parser_test`：头字段、高/低/球坐标转换、逐点时间、line、IMU、
     time_type 映射、handle 字节序、越界与双回波；
   - `config_json_test`：端口、host_ip、文件权限、默认路径、`MID360` + `Mid360s`；
@@ -195,7 +195,7 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
     溢出、槽位耗尽；
   - `lidar_test`：完整生命周期、点云/IMU（含 g→m/s²）、统计、超时、
     多 handle 路由、SDK handle 与 IP 预绑定不一致时的回退、恢复。
-- `foray_platform_driver_livox_backend_tests`（1 个）：
+- `diesel_platform_driver_livox_backend_tests`（1 个）：
   - OFF 断言公共工厂 `open()` 返回 `kSdkUnavailable`；
   - ON 只验证真实后端能构造，不打开设备。
 
@@ -205,8 +205,8 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 - ASan + UBSan：30/30 通过；
 - TSan：30/30 通过（mock 的 `uninit()` 模拟 SDK 等待回调归零）；
 - `ldd`：core 测试不出现 Livox SDK；backend 测试在 ON 下链接 SDK；
-- 安装后下游 `find_package(foray_platform_driver_livox)` 可链接
-  `foray_platform::driver_livox`；ON 静态库经 `find_dependency(LivoxSDK2)` 重新定位。
+- 安装后下游 `find_package(diesel_platform_driver_livox)` 可链接
+  `diesel_platform::driver_livox`；ON 静态库经 `find_dependency(LivoxSDK2)` 重新定位。
 
 ## 11. 已知限制
 
@@ -226,22 +226,22 @@ kClosed -> kOpening -> kOpen -> kStreaming -> kStopping -> kOpen -> kClosed
 构建时打开（需要 SDK ON）：
 
 ```bash
-cmake -S src/foray_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
+cmake -S src/diesel_platform_driver_livox -B ~/.cache/foray-platform-build/livox-on \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$HOME/.cache/foray-platform-prefix" \
-  -DFORAY_BUILD_DRIVER_LIVOX=ON \
-  -DFORAY_LIVOX_SDK_PROVIDER=PREBUILT \
-  -DLIVOX_SDK2_ROOT="$HOME/.cache/foray-platform-prefix/livox-sdk2" \
-  -DFORAY_LIVOX_BUILD_TOOLS=ON
+  -DCMAKE_PREFIX_PATH="$HOME/.cache/diesel-platform-prefix" \
+  -DDIESEL_BUILD_DRIVER_LIVOX=ON \
+  -DDIESEL_LIVOX_SDK_PROVIDER=PREBUILT \
+  -DLIVOX_SDK2_ROOT="$HOME/.cache/diesel-platform-prefix/livox-sdk2" \
+  -DDIESEL_LIVOX_BUILD_TOOLS=ON
 cmake --build ~/.cache/foray-platform-build/livox-on -j"$(nproc)"
 ```
 
 运行：
 
 ```bash
-export LD_LIBRARY_PATH="$HOME/.cache/foray-platform-prefix/livox-sdk2/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$HOME/.cache/diesel-platform-prefix/livox-sdk2/lib:$LD_LIBRARY_PATH"
 
-~/.cache/foray-platform-build/livox-on/foray_livox_dump \
+~/.cache/foray-platform-build/livox-on/diesel_livox_dump \
   --host-ip 192.168.1.51 \
   --lidar-ip 192.168.1.195 \
   --frames 3 \
@@ -262,7 +262,7 @@ imv /tmp/livox_cloud.ppm
 自检（不需要雷达，验证输出格式）：
 
 ```bash
-~/.cache/foray-platform-build/livox-on/foray_livox_dump \
+~/.cache/foray-platform-build/livox-on/diesel_livox_dump \
   --self-test --out /tmp/livox_selftest
 imv /tmp/livox_selftest.ppm
 ```
@@ -270,7 +270,7 @@ imv /tmp/livox_selftest.ppm
 流式输出（不落文件，直接给管道消费）：
 
 ```bash
-~/.cache/foray-platform-build/livox-on/foray_livox_dump \
+~/.cache/foray-platform-build/livox-on/diesel_livox_dump \
   --host-ip 192.168.1.51 \
   --lidar-ip 192.168.1.195 \
   --stream --frames 0 \
@@ -292,7 +292,7 @@ imv /tmp/livox_selftest.ppm
 无雷达时验证流式格式：
 
 ```bash
-~/.cache/foray-platform-build/livox-on/foray_livox_dump --self-test --stream | head -4
+~/.cache/foray-platform-build/livox-on/diesel_livox_dump --self-test --stream | head -4
 ```
 
 ### 12.2 官方工具（建议先做）
@@ -334,6 +334,6 @@ imv /tmp/livox_selftest.ppm
 - 配置：生成 JSON 同时包含 `MID360` + `Mid360s`，默认单播，
   `frame_duration_ms=100`；
 - 结果：2 帧 × 20064 点，`packets_dropped=0`；
-  `foray_livox_dump` 输出 PCD/PPM，俯视图可见场景轮廓；
+  `diesel_livox_dump` 输出 PCD/PPM，俯视图可见场景轮廓；
 - IMU：`acc_z≈9.05 m/s²`（设备有倾斜），`gyro` 正常；
 - 关键修复：Mid-360s 配置键、`s_addr` handle、时间窗口切帧、g→m/s²。
