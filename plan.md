@@ -10,7 +10,7 @@
 - [x] 候选 RoboLink 零槽保活帧离线组帧与独立黄金字节测试（不代表电控端已支持）
 - [x] 候选 RoboLink 字节流解析器：半帧、连帧、垃圾前缀、坏头及 CRC 失败恢复的离线测试
 - [x] 候选 RoboLink 零槽/单槽/多槽帧与八类消息载荷的编解码/校验，完成 USB 字节通道离线串接
-- [x] 按已合入 `foray_interfaces` 的 RoboLink v0.2 候选稿更新云台角 rad 与姿态反馈的离线测试向量
+- [x] 按已合入 `diesel_interfaces` 的 RoboLink v0.2 候选稿更新云台角 rad 与姿态反馈的离线测试向量
 - [x] 离线实现主机握手、心跳、状态回读、500 ms 超时及设备重开状态机
 - [ ] 验证发送调度的频率/延迟，并与 MCU 固件进行只读/禁能联调
 - [ ] 完成 v0.2 与电控固件逐字节对账及失联动作验收；在此之前不发送控制指令到硬件
@@ -23,75 +23,75 @@
 
 ### 任务 1 交付物
 
-- `src/foray_platform_core/include/foray/platform/time/`
+- `src/diesel_platform_core/include/diesel/platform/time/`
   - `Duration` / `Timestamp` 强类型；
   - `Clock` 接口 + `SystemClock` / `SteadyClock` / `ManualClock`；
   - 三个时钟域与 `use_sim_time` 就绪/跳变语义；
 - 设计说明：[docs/time_and_clock.md](docs/time_and_clock.md)；
-- 单测：`src/foray_platform_core/test/time/clock_test.cpp`。
+- 单测：`src/diesel_platform_core/test/time/clock_test.cpp`。
 
 ### 任务 2 交付物
 
-- `src/foray_platform_core/include/foray/platform/param/`
+- `src/diesel_platform_core/include/diesel/platform/param/`
   - 类型化 schema、声明校验、范围/枚举校验；
   - 不可变快照 + 原子替换的存储；
   - 多来源分层（对应 `shared.yaml` + `<robot>.yaml`）；
   - YAML 文件来源（严格未知键、按 schema 解析类型）；
   - 初始加载 / 热加载门面，整批原子生效；
 - 设计说明：[docs/parameter_system.md](docs/parameter_system.md)；
-- 单测：`src/foray_platform_core/test/param/`。
+- 单测：`src/diesel_platform_core/test/param/`。
 
 ### M1 交付物（HAL 前置）
 
-- 包合并：`foray_platform_core/` → `foray_platform/`；
-  `foray_platform_core` 与后续 `foray_platform_hal` 为同包两个 target；
-- `src/foray_platform_core/include/foray/platform/result/`
+- 包合并：`diesel_platform_core/` → `diesel_platform/`；
+  `diesel_platform_core` 与后续 `diesel_platform_hal` 为同包两个 target；
+- `src/diesel_platform_core/include/diesel/platform/result/`
   - `ErrorCode` / `Error` / `Result<T>` / `Result<void>`；
   - 驱动原始错误码保留在 `Error::vendor_code`；
-- 单测：`src/foray_platform_core/test/result/result_test.cpp`；
+- 单测：`src/diesel_platform_core/test/result/result_test.cpp`；
 - 决策记录：`decision.md` 的包合并、配置栈归属、通用错误类型条目。
 
 ### M2 交付物
 
-- `src/foray_platform_core/include/foray/platform/container/spsc_queue.hpp`
+- `src/diesel_platform_core/include/diesel/platform/container/spsc_queue.hpp`
   - 有界、无锁、单生产者/单消费者；
   - 容量向上取 2 的幂；满时 `try_push` 返回 false 并累计 `dropped()`；
   - `T` 要求可默认构造、移动构造/赋值不抛异常；
-- 单测：`src/foray_platform_core/test/container/spsc_queue_test.cpp`；
+- 单测：`src/diesel_platform_core/test/container/spsc_queue_test.cpp`；
 - TSan 并发用例通过。
 
 ### M3 交付物
 
-- `src/foray_platform_core/include/foray/platform/config/`
+- `src/diesel_platform_core/include/diesel/platform/config/`
   - `ConfigDocument` / `ConfigLayer`：分层与可选层；
   - `ConfigResolver`：YAML 加载、顶层 `include`、`${ENV}` 替换、
-    `FORAY_<PARAM>` 覆盖、来源追踪；
+    `DIESEL_<PARAM>` 覆盖、来源追踪；
   - `ConfigSnapshot`：已校验值 + provenance；
   - `ConfigExporter`：dump / Markdown schema / JSON Schema；
   - `ConfigTool`：validate/dump/schema 门面（可执行文件待 HAL schema 落地）；
 - 复用 `param` 的 `ParamSchema` / `ParamValue` / `ParamStore` 做校验与宽化；
 - 设计说明：[docs/config_stack.md](docs/config_stack.md)；
-- 单测：`src/foray_platform_core/test/config/`；ASan/UBSan 通过。
+- 单测：`src/diesel_platform_core/test/config/`；ASan/UBSan 通过。
 
 ### M4/M5 交付物
 
-- `src/foray_platform_core/include/foray/platform/hal/`
+- `src/diesel_platform_core/include/diesel/platform/hal/`
   - `Device` / `Camera` / `Lidar` 生命周期与读取接口；
   - `ImageFrame` / `PointCloudFrame` / `ImuSample` / `TimestampSync`；
   - `CameraConfig` / `LidarConfig` / `DeviceSelector` / `TriggerConfig`；
   - `FrameLease`（move-only）+ `FramePool`（最新帧邮箱、固定槽位、无锁读写）；
-- 同包新增 `foray_platform_hal` interface target，导出 `foray_platform::hal`；
+- 同包新增 `diesel_platform_hal` interface target，导出 `diesel_platform::hal`；
 - 单测：类型/默认值、发布/获取、替换丢帧、槽位耗尽、租约晚于池销毁、
   单写单读并发；ASan/UBSan/TSan 通过；
 - 设计说明：[docs/hal_architecture.md](docs/hal_architecture.md)。
 
 ### M6 交付物
 
-- `src/foray_platform_core/include/foray/platform/hal/config_binder.hpp`
+- `src/diesel_platform_core/include/diesel/platform/hal/config_binder.hpp`
   - `make_camera_param_schema()` / `make_lidar_param_schema()`；
   - `bind_camera_config()` / `bind_lidar_config()`；
   - 跨字段约束：transport 与 serial/ip、trigger 与 frame_rate、像素格式支持；
-- `foray_platform_hal` 从 interface 转为普通库；
+- `diesel_platform_hal` 从 interface 转为普通库；
 - `test/hal/fake_sensor.hpp`：FakeCamera/FakeLidar，覆盖生命周期、超时、恢复；
 - 单测：ConfigBinder + Fake 传感器；ASan/UBSan 通过。
 
@@ -114,7 +114,7 @@
 设计与取舍见 [docs/driver_hikvision.md](docs/driver_hikvision.md)。
 - 隔离方式沿用 Livox：`detail::MvsApi` 虚接口，`src/hikvision/mvs_api_real.cpp`
   是唯一 include `MvCameraControl.h` 的翻译单元；公共头只有 HAL 类型；
-  `FORAY_BUILD_DRIVER_HIKVISION=ON/OFF` + `FORAY_MVS_ROOT`，ON 找不到 SDK 直接
+  `DIESEL_BUILD_DRIVER_HIKVISION=ON/OFF` + `DIESEL_MVS_ROOT`，ON 找不到 SDK 直接
   `FATAL_ERROR`；core/backend 两个 OBJECT 目标，mock 测试不链 MVS。
 - 取流模型不同于 Livox：`MV_CC_GetImageBuffer` 是阻塞调用，取流线程即生产者，
   链路为 `GetImageBuffer → memcpy 到 FramePool → FreeImageBuffer`（同线程），
@@ -127,12 +127,12 @@
 - 已完成：
   - HAL 参数缺口 1/2/3 已补齐（`device_to_host_offset_ns` /
     `exposure_to_host_latency_ns`、`trigger.debounce_us` 进 schema 与 binder）；
-  - `src/foray_platform_driver_hikvision/`：公共工厂、生命周期与取流、节点映射、
+  - `src/diesel_platform_driver_hikvision/`：公共工厂、生命周期与取流、节点映射、
     时间换算、错误映射、stub 与真实后端（`mvs_api_real.cpp`）；
   - 81 个单测（生命周期 / 配置映射顺序 / 时间三路径 / 超时与掉线 / 帧池计数 /
-    后端能力），`FORAY_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全绿；
-  - `foray_hikvision_dump`：配置 + 取 N 帧 + 帧率/丢帧统计 + 软触发循环；
-  - `foray_hikvision_dump --view`（2026-10-25）：构建期找到 SDL2 时开窗口
+    后端能力），`DIESEL_BUILD_DRIVER_HIKVISION=OFF` 与 `=ON` 两种配置全绿；
+  - `diesel_hikvision_dump`：配置 + 取 N 帧 + 帧率/丢帧统计 + 软触发循环；
+  - `diesel_hikvision_dump --view`（2026-10-25）：构建期找到 SDL2 时开窗口
     实时预览，保持原始宽高比、首帧到达后才建窗，ESC/q/关窗即停流；
     合成棋盘帧截屏采样验证无偏色且 4:3 不拉伸；
   - 实机 HIL（MV-CS004-10GC）：720×540 @ 118–127 Hz，200 帧 0 丢包，
@@ -142,9 +142,9 @@
 
 ### M9/M10 交付物（Livox）
 
-- `src/foray_platform_driver_livox/`（纯 CMake，不依赖 ROS）
+- `src/diesel_platform_driver_livox/`（纯 CMake，不依赖 ROS）
   - 公共工厂 `driver::livox::make_lidar(const hal::LidarConfig&)`，公共头无 SDK 类型；
-  - `livox_api.hpp` 函数表抽象 + stub/真实实现，`FORAY_BUILD_DRIVER_LIVOX` 开关；
+  - `livox_api.hpp` 函数表抽象 + stub/真实实现，`DIESEL_BUILD_DRIVER_LIVOX` 开关；
   - `LivoxRuntime`：进程级 SDK 引用计数、handle 路由、sink 墓地；
   - 原始包环（`SpscQueue<PacketSlot>`）+ 解析线程 + `FramePool` 组帧；
   - 包解析：0x01 高精度 / 0x02 低精度 / 0x03 球坐标 / 0x00 IMU；
@@ -155,55 +155,55 @@
   - IMU 加速度 g → m/s²（`9.80665`）；
   - JSON 生成（0600）、本机 IP 校验、默认单播、多雷达、退避恢复；
   - SDK 依赖：`FindLivoxSDK2.cmake` + `LivoxSDK2::shared`；
-    `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`；
+    `DIESEL_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`；
   - core/backend 目标拆分：mock 测试只链 core，任何开关下不依赖 SDK；
-  - `FORAY_DRIVER_LIVOX_HAS_SDK=0/1` 作为已安装产物能力导出；
-  - `foray_livox_dump`：PCD + 俯视 PPM 导出、`--self-test` 自检；
+  - `DIESEL_DRIVER_LIVOX_HAS_SDK=0/1` 作为已安装产物能力导出；
+  - `diesel_livox_dump`：PCD + 俯视 PPM 导出、`--self-test` 自检；
     `--stream` 逐点流式写 stdout（每帧 flush、统计走 stderr、
     `--frames 0` 持续输出、EPIPE 视为正常结束）；
 - 文档：[docs/driver_livox.md](docs/driver_livox.md)、
   [docs/driver_deployment.md](docs/driver_deployment.md)；
 - 单测：30 个用例（29 core + 1 backend），mock 覆盖生命周期、路由、恢复、解析、组帧；
   常规 / ASan+UBSan / TSan 全绿；安装后下游 `find_package` 通过；
-- 跨仓：`foray_ws/.repos` pin Livox-SDK2 v1.3.1，新增依赖/构建/环境脚本；
+- 跨仓：`diesel_ws/.repos` pin Livox-SDK2 v1.3.1，新增依赖/构建/环境脚本；
 - **已完成**：真实 SDK2 构建、ON 编译/链接、下游消费；实机 HIL：
   Mid-360s `192.168.1.195`，2–3 帧 × 20064 点、IMU、PCD/PPM；
 - **未完成**：双回波 `0x11`。
 
 ### M11 交付物（雷达网络自举与参数注入）
 
-- `src/foray_platform_core/include/foray/platform/net/`
+- `src/diesel_platform_core/include/diesel/platform/net/`
   - `net_types.hpp`：`Ipv4` / `InterfaceInfo` / `Topology` / 只读 `probe_topology()`；
   - `process.hpp`：`ProcessRunner` 抽象（不经过 shell）；
   - `backend.hpp` + `nm_backend.hpp` + `netlink_backend.hpp`：NM 优先、netlink 回退；
   - `setup.hpp`：`plan_link()` 纯规划、`ensure_link()` 执行 + 逆序回滚、`select_backend()`；
-- `src/foray_platform_core/apps/foray_net_helper.cpp`：libexec helper，参数白名单，
-  polkit 动作 `org.foray.netconfig.bootstrap` 只放行该程序；
+- `src/diesel_platform_core/apps/diesel_net_helper.cpp`：libexec helper，参数白名单，
+  polkit 动作 `org.diesel.netconfig.bootstrap` 只放行该程序；
 - 驱动控制面：`LivoxApi` 增 set_lidar_ip / set_install_attitude / set_pps_sync_mode /
   set_host_port_cfg / set_rmc_sync_time / query_internal_info；`LivoxControl`
-  统一重试与写后读回；`foray_livox_config` 工具；
-- `foray_lidar_up`：链路就绪检测 + pkexec 调 helper + 驱动启动 + 读帧健康确认
+  统一重试与写后读回；`diesel_livox_config` 工具；
+- `diesel_lidar_up`：链路就绪检测 + pkexec 调 helper + 驱动启动 + 读帧健康确认
   （退出码 2/3/4/5/6 区分驱动、网络与无帧）；
 - 文档：[docs/net_bootstrap.md](docs/net_bootstrap.md)，
   `docs/driver_deployment.md` §2.2 改为 helper 自举；
 - 单测：平台 150 个用例（net 新增 32 个）、驱动 36 个（控制面 6 个）全绿；
 - **待 HIL**：实机雷达当前断线（`enp0s31f6` 无载波），helper 已能经 NM
-  创建 `foray-enp0s31f6-slave` 并给出"没有载波"警告。
+  创建 `diesel-enp0s31f6-slave` 并给出"没有载波"警告。
 
 ### M12 交付物（USB CDC 与候选 RoboLink）
 
-- `foray_platform/include/foray/platform/link/`（命名空间 `foray::platform::link`）
+- `diesel_platform/include/diesel/platform/link/`（命名空间 `diesel::platform::link`）
   - `usb_cdc_port.hpp`：设备路径与 fd 生命周期、原始字节读写；
   - `robolink_crc.hpp`：CRC-32/ISO-HDLC；
   - `robolink_frame.hpp`：零槽保活组帧；`robolink_frame_parser.hpp`：字节流切帧与重同步；
   - `robolink_codec.hpp`：零槽/单槽/多槽帧 + 八类载荷的显式小端编解码；
   - `robolink_byte_channel.hpp`：设备↔帧层桥接（单帧待发、部分写入）；
   - `robolink_host_link.hpp`：主机握手/心跳/回读/超时/重开状态机；
-- 同包新增 `foray_platform_link` 库目标（EXPORT_NAME `link`），并入
-  `foray_platform_tests`；
-- 单测：`foray_platform/test/link/` 21 个用例（设备生命周期、CRC 向量、组帧黄金字节、
+- 同包新增 `diesel_platform_link` 库目标（EXPORT_NAME `link`），并入
+  `diesel_platform_tests`；
+- 单测：`diesel_platform/test/link/` 21 个用例（设备生命周期、CRC 向量、组帧黄金字节、
   半帧/连帧/坏头恢复、载荷往返、字节通道、主机链路）；
-- **本地无硬件验证**：`cmake -S foray_platform -B build/platform -DCMAKE_BUILD_TYPE=Debug`
+- **本地无硬件验证**：`cmake -S diesel_platform -B build/platform -DCMAKE_BUILD_TYPE=Debug`
   + `cmake --build` + `ctest` → 192/192 通过（含 link 21 个）；
 - 文档：[docs/robolink_protocol_review.md](docs/robolink_protocol_review.md)；
 - **未完成**：与 MCU 固件逐字节对账、发送频率/延迟验收、实机联调、失联动作验收。
@@ -217,10 +217,10 @@
 - `link_ready`：`(topology, iface, bridge, host_ip=nullopt, min_prefix=16,
   min_mtu=nullopt)`，空地址只校验挂桥/载波，MTU 0 视为未知；
 - `net/bootstrap.hpp`：`bootstrap_link()` 编排（探拓扑 → 判就绪 → pkexec →
-  helper），雷达与相机共用；`foray_lidar_up` 删除本地拼装，改为调用它；
-- `foray-net-helper`：新增 `--mtu 576-65535` 与 `--allow-reassign-master`；
+  helper），雷达与相机共用；`diesel_lidar_up` 删除本地拼装，改为调用它；
+- `diesel-net-helper`：新增 `--mtu 576-65535` 与 `--allow-reassign-master`；
 - Hikvision：`camera_bootstrap`（LLA/同网段地址规划）、
-  `foray_hikvision_up`（挂 `br-camera` → 地址 → MTU → 枚举 → 取 3 帧），
+  `diesel_hikvision_up`（挂 `br-camera` → 地址 → MTU → 枚举 → 取 3 帧），
   USB3 只做可见性检测 + TODO；
 - 文档：[docs/net_bootstrap.md](docs/net_bootstrap.md) 去雷达限定，
   `docs/driver_deployment.md` §2 加桥隔离/MTU、§4 加一键自举与 USB3 TODO；
@@ -232,10 +232,10 @@
 
 - 仓根 = colcon 空间根：三个包迁入 `src/`，仓根只保留文档五件套、`docs/`、`.github/`
   与构建产物目录（`build/`、`install/`、`log/`，不入库）；
-- 核心包更名 `foray_platform_core`（`package.xml` 名 / CMake `project()` / 包配置导出
-  文件名），`find_package(foray_platform_core)` 供两个驱动与后续 ROS 适配层消费；
-  **导出命名空间仍为 `foray_platform::core|hal|net`**，下游链接不变；
-- 包内骨架固化：C++ 可执行小工具进 `apps/`（core `foray_net_helper`；hikvision
+- 核心包更名 `diesel_platform_core`（`package.xml` 名 / CMake `project()` / 包配置导出
+  文件名），`find_package(diesel_platform_core)` 供两个驱动与后续 ROS 适配层消费；
+  **导出命名空间仍为 `diesel_platform::core|hal|net`**，下游链接不变；
+- 包内骨架固化：C++ 可执行小工具进 `apps/`（core `diesel_net_helper`；hikvision
   `camera_dump`/`camera_up`/`viewer`；livox `livox_dump`/`livox_config`/`lidar_up`），
   polkit 动作与免密规则进 `data/polkit/`，包内不再有 `tools/`；
 - `README.md`、`tree.md`、`docs/**` 的路径与包名同步；
@@ -251,7 +251,7 @@ M14_LAYOUT_REFACTOR_DONE + HOST_LINK_V02_OFFLINE_TESTED（目录规范化完成�
 
 commit hash:   af2dd95（origin/dev，合并上游后）
 branch:        feat/usb-cdc
-modified files: 新增 `foray/platform/link/` 头文件、`src/link/` 源码、`test/link/` 测试；
+modified files: 新增 `diesel/platform/link/` 头文件、`src/link/` 源码、`test/link/` 测试；
   CMakeLists 新增 link 库目标与 install；README/tree/plan/decision 增补 link 章节
 risk level:    L1
 
@@ -262,10 +262,10 @@ risk level:    L1
 - **ROS 适配层尚未开始**：`use_sim_time` 的映射已在文档中冻结，但 `/clock` 订阅与 `rclcpp` 适配留到后续单元
 - **`package.xml` 的 `license` 字段为 `TODO`**，需组织确认许可证后填写
 - 参数系统暂不支持序列参数与变更回调；配置栈的数组/动态列表支持按需扩展
-- 配置解析栈按计划在 core 内扩展（`config/`）；机器人 YAML 归 `foray_robots`
+- 配置解析栈按计划在 core 内扩展（`config/`）；机器人 YAML 归 `diesel_robots`
 - HAL 目标的驱动与 ROS 适配尚未开始，按 M2–M12 里程碑推进
-- Livox SDK2 开发机默认装到 `~/.cache/foray-platform-prefix/livox-sdk2`；
-  实机镜像固定 `/opt/foray/livox-sdk2`；版本由 `foray_ws/.repos` pin
+- Livox SDK2 开发机默认装到 `~/.cache/diesel-platform-prefix/livox-sdk2`；
+  实机镜像固定 `/opt/diesel/livox-sdk2`；版本由 `diesel_ws/.repos` pin
 - 实机雷达为 **Livox Mid-360s**（dev_type 35，SN `ARMCP7D0030195`），
   IP `192.168.1.195`，主机 `br-lidar` `192.168.1.51`；HIL 已通过
 
@@ -285,10 +285,10 @@ Commit: （首次提交）
 - [x] Livox 驱动在无 SDK 环境用 stub/mock 构建并测试全绿
 - [x] Livox 真实 SDK2 构建、ON 编译/链接与下游消费
 - [x] Livox 实机读取：Mid-360s 点云 + IMU + PCD/PPM
-- [x] 网络自举：probe/plan/rollback/nmcli 命令行断言覆盖，`foray-net-helper`
-      经 pkexec 实机生效（NM profile `foray-enp0s31f6-slave` 持久）
+- [x] 网络自举：probe/plan/rollback/nmcli 命令行断言覆盖，`diesel-net-helper`
+      经 pkexec 实机生效（NM profile `diesel-enp0s31f6-slave` 持久）
 - [x] 常规 / ASan+UBSan / TSan 三套构建全绿（平台 151 + 驱动 36）
-- [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `foray_lidar_up`）
+- [ ] 雷达网络自举 + 流式输出的实机 HIL（雷达恢复连接后跑 `diesel_lidar_up`）
 - [ ] 本仓能独立 `colcon build`（需在 ROS 2 环境/CI 验证）
 - [x] link 模块 21 个用例并入平台测试目标（本地 Debug 构建 192/192 通过）
 - [ ] RoboLink v0.2 与 MCU 固件逐字节对账 + 实机联调（对账前不向硬件发控制指令）

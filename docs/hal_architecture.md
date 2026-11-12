@@ -1,7 +1,7 @@
 # L2 HAL 架构
 
-> 所属层：L2 下行 HAL · 代码：`src/foray_platform_core/include/foray/platform/hal/`
-> 包内 target：`foray_platform_hal`（与 L1 `core` 同包）
+> 所属层：L2 下行 HAL · 代码：`src/diesel_platform_core/include/diesel/platform/hal/`
+> 包内 target：`diesel_platform_hal`（与 L1 `core` 同包）
 
 ## 1. 目标
 
@@ -13,7 +13,7 @@
 ## 2. 分层与依赖
 
 ```text
-foray_platform_ros  ->  foray_platform::hal  ->  foray_platform::core
+diesel_platform_ros  ->  diesel_platform::hal  ->  diesel_platform::core
                               ^
                      driver_hikvision / driver_livox
 ```
