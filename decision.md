@@ -35,7 +35,7 @@ Date: 2026-10-18
 Context: L1 必须能脱离 ROS 单测，且本机开发环境（Arch）没有 ROS 2 Humble。
 需要确定 L1 代码与 ROS 的耦合边界。
 
-Decision: 新增 `foray_platform_core`，采用**纯 CMake + C++17**，
+Decision: 新增 `diesel_platform_core`，采用**纯 CMake + C++17**，
 不链接 `rclcpp`/`ament_cmake`；`package.xml` 声明 `build_type=cmake`，
 使 colcon 与普通 `cmake` 都能构建。ROS 适配层后续单独成包。
 
@@ -145,18 +145,18 @@ Rejected:
 
 Date: 2026-10-18
 
-Context: 原计划把 L1 core 与 L2 HAL 拆成两个包（`foray_platform_core`
-与 `foray_platform_hal`）。两者同仓、同 owner、同变更率，额外包会带来
+Context: 原计划把 L1 core 与 L2 HAL 拆成两个包（`diesel_platform_core`
+与 `diesel_platform_hal`）。两者同仓、同 owner、同变更率，额外包会带来
 重复的 package.xml、CMake 导出与 CI 条目。
 
-Decision: 合并为一个包 **`foray_platform`**，包内保留两个 CMake target：
-`foray_platform_core`（L1）与 `foray_platform_hal`（L2）；
-别名仍为 `foray_platform::core` / `foray_platform::hal`。
+Decision: 合并为一个包 **`diesel_platform`**，包内保留两个 CMake target：
+`diesel_platform_core`（L1）与 `diesel_platform_hal`（L2）；
+别名仍为 `diesel_platform::core` / `diesel_platform::hal`。
 
 Reason:
 - 符合「一个仓 = 一个团队角色 + 一个变更率档位」；
 - 减少重复的构建/导出/CI 配置；
-- L1/L2 边界由 target 与 `include/foray/platform/{core 模块,hal}` 路径保留。
+- L1/L2 边界由 target 与 `include/diesel/platform/{core 模块,hal}` 路径保留。
 
 Alternatives:
 - 保持两个独立包：边界更硬，但当前收益不足以抵消重复配置；
@@ -173,19 +173,19 @@ Date: 2026-10-18
 
 Context: 整个软件系统需要统一的配置文件解析栈。需要确认归属，避免各仓重复实现。
 
-Decision: **不新建仓**。解析机制归 `foray_platform` 的 core target
+Decision: **不新建仓**。解析机制归 `diesel_platform` 的 core target
 （在现有 `param` 上扩展 `config`：分层、include、env 替换、来源追踪、CLI）；
-机器人相关配置值与装配归 `foray_robots`。
+机器人相关配置值与装配归 `diesel_robots`。
 
 Reason:
-- `foray_docs/repository_structure.md` §2 已把「参数系统」划给 `foray_platform`；
+- `foray_docs/repository_structure.md` §2 已把「参数系统」划给 `diesel_platform`；
 - 同文档 §1 明确把「把 config 拆出独立仓」列为反模式，config 属于装配根；
-- `foray_robots` 已有远端仓，但目前只有骨架，尚无代码/配置；
+- `diesel_robots` 已有远端仓，但目前只有骨架，尚无代码/配置；
 - 平台组作为 owner，配置栈被所有仓依赖、变更率低，符合 C1/C2/C3。
 
 Alternatives:
-- 新建 `foray_config`：仅在未来出现非 C++ 消费者、独立发布节奏或仓外工具链时再评估；
-- 放到 `foray_interfaces`：该仓是通信契约仓，不适合运行时配置解析。
+- 新建 `diesel_config`：仅在未来出现非 C++ 消费者、独立发布节奏或仓外工具链时再评估；
+- 放到 `diesel_interfaces`：该仓是通信契约仓，不适合运行时配置解析。
 
 Rejected:
 - 各仓自行解析 YAML；
@@ -310,7 +310,7 @@ Date: 2026-10-18
 Context: 本机开发/CI 环境不一定安装 Livox SDK2，驱动仍需要可构建、可测试。
 
 Decision:
-- `FORAY_BUILD_DRIVER_LIVOX` 默认 OFF；
+- `DIESEL_BUILD_DRIVER_LIVOX` 默认 OFF；
 - OFF 时构建 stub，所有控制接口返回 `kSdkUnavailable`，下游仍可链接；
 - ON 时用 `LIVOX_SDK2_ROOT`/系统路径 `find_path` + `find_library`，
   找不到直接 `FATAL_ERROR`，不静默降级；
@@ -337,15 +337,15 @@ ON 时 mock 测试被迫链接真实 SDK；静态驱动库把构建机 SDK 绝�
 Decision:
 - **不 fork、不使用 submodule、不使用 FetchContent**；Livox-SDK2 v1.3.1
   以 commit `f5d9375f84efe2b15bc0a052d3e18482ed13adf4` 在
-  `foray_ws/.repos` 中 pin 到 `third_party/livox_sdk2`；
-- 开发机默认安装到 `~/.cache/foray-platform-prefix/livox-sdk2`；
-  实机镜像固定 `/opt/foray/livox-sdk2`；
+  `diesel_ws/.repos` 中 pin 到 `third_party/livox_sdk2`；
+- 开发机默认安装到 `~/.cache/diesel-platform-prefix/livox-sdk2`；
+  实机镜像固定 `/opt/diesel/livox-sdk2`；
 - CMake 新增 `FindLivoxSDK2.cmake`，只暴露 `LivoxSDK2::shared`；
-  `FORAY_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`，PREBUILT 要求 SDK 位于
+  `DIESEL_LIVOX_SDK_PROVIDER=SYSTEM|PREBUILT`，PREBUILT 要求 SDK 位于
   `LIVOX_SDK2_ROOT` 之下；
-- 驱动拆成 `foray_livox_core_objects`（无 SDK）与
-  `foray_livox_backend_objects`（real/stub）；mock 测试只链 core；
-- `FORAY_DRIVER_LIVOX_HAS_SDK` 作为最终 target 的 PUBLIC 定义（0/1），
+- 驱动拆成 `diesel_livox_core_objects`（无 SDK）与
+  `diesel_livox_backend_objects`（real/stub）；mock 测试只链 core；
+- `DIESEL_DRIVER_LIVOX_HAS_SDK` 作为最终 target 的 PUBLIC 定义（0/1），
   描述已安装产物能力；下游用 `#if` 判断；
 - 静态库的 SDK 依赖以 `$<LINK_ONLY:LivoxSDK2::shared>` 导出，
   下游由包 Config 的 `find_dependency(LivoxSDK2)` 重新定位。
@@ -409,7 +409,7 @@ Rejected:
 
 Date: 2026-10-20
 
-Context: 手动测试需要观察驱动长时间取流是否稳定。原 `foray_livox_dump` 必须先在内存里
+Context: 手动测试需要观察驱动长时间取流是否稳定。原 `diesel_livox_dump` 必须先在内存里
 攒满 N 帧再一次性写 PCD，帧数一大就吃内存，也看不到实时进度；PCD 头要求预先声明
 `WIDTH`/`POINTS`，天然不适合不定长流。
 
@@ -450,17 +450,17 @@ Context: 比赛现场重配雷达链路要操作手手工 `sudo ip link set ... 
 改错 IP 会直接失联且无法从雷达侧读回验证。
 
 Decision:
-- 新增 `foray_platform::net`：只读 `probe_topology()` → 纯函数 `plan_link()` →
+- 新增 `diesel_platform::net`：只读 `probe_topology()` → 纯函数 `plan_link()` →
   `ensure_link()` 执行，失败按逆序回滚；
-- 后端**NetworkManager 优先**（创建 `foray-<iface>-slave` profile，重启保留），
+- 后端**NetworkManager 优先**（创建 `diesel-<iface>-slave` profile，重启保留），
   无 NM 时回退 rtnetlink；两者都实现同一 `NetBackend` 接口，可 mock；
-- 特权不用 setuid：`foray-net-helper` 装到 libexec，polkit 动作
-  `org.foray.netconfig.bootstrap` 用 `exec.path` 只放行该程序，参数白名单在工具内；
-  可选 `60-foray-netconfig.rules` 让 `foray` 组免密；
+- 特权不用 setuid：`diesel-net-helper` 装到 libexec，polkit 动作
+  `org.diesel.netconfig.bootstrap` 用 `exec.path` 只放行该程序，参数白名单在工具内；
+  可选 `60-diesel-netconfig.rules` 让 `diesel` 组免密；
 - 雷达参数注入走 `LivoxControl`：总尝试 3 次、间隔 100 ms、单次等待 800 ms；
   只对 kTimeout/kSdkError/kBusy/kNoData 重试；
 - 写参数后**必须读回**：`QueryLivoxLidarInternalInfo` 解析 `kKeyLidarIpCfg`
-  并比对；`foray_livox_config` 默认 `--dry-run` 只读，`--set-lidar-ip` 显式才改。
+  并比对；`diesel_livox_config` 默认 `--dry-run` 只读，`--set-lidar-ip` 显式才改。
 
 Reason:
 - NM 是这台机（也是大部分桌面 Ubuntu）真正的网络配置权威，绕过它必然被拆；
@@ -481,7 +481,7 @@ Rejected:
 ## 2026-10-20 流式输出独占 stdout
 
 Background:
-- Livox SDK2 的 console 日志写 fd 1；`foray_livox_dump --stream` 实机输出里混入 18 行
+- Livox SDK2 的 console 日志写 fd 1；`diesel_livox_dump --stream` 实机输出里混入 18 行
   `[console] [info] ...`，管道消费方无法直接解析。
 
 Decision:
@@ -502,15 +502,10 @@ Rejected:
 
 ## 2026-10-23 海康 MVS 驱动接入与封装方案
 
-2026-11-05 补充：MV-CS004-10GC 实机的 `GevTimestampTickFrequency` 为
-100 MHz，旧的 `DeviceTicksFrequency` 查询失败。驱动优先读取 GigE 节点，
-其次兼容通用与旧节点；不改变默认 `stamp` 语义。相机未开启 PTP，设备
-tick 不可直接作为与电控同一时钟域的绝对时间，也不宣称它是发包时刻。
-
 > 已在 2026-10-24 落地，实施细节见本文末条「2026-10-24」。
 
 Background:
-- M7/M8（`foray_platform_driver_hikvision`）尚未开工，但 HAL 已落地、Livox 驱动已给出
+- M7/M8（`diesel_platform_driver_hikvision`）尚未开工，但 HAL 已落地、Livox 驱动已给出
   可复用的「SDK 隔离 + core/backend 拆分」范式；需要先定方案再动手，避免重演
   `sp_vision_25/io/hikrobot/` 的做法（默认取第 0 个设备、驱动内 Bayer→RGB、
   按 VID/PID 盲 reset、`capture_stop()` 中途 return 漏 Close/Destroy）。
@@ -532,16 +527,16 @@ Decision:
   `recover()` 重新枚举重开。
 - SDK 分发：闭源二进制不进本仓，统一放组织私有仓 `ZQU-Foray/mvs-sdk`
   （private，SDK V4.8.0.3，pin `b55df46`）。消费方按 Livox 范式 pin commit，
-  不引用分支（元仓 `foray_ws/.repos` 已 pin `third_party/mvs_sdk`）；该仓同时提供
+  不引用分支（元仓 `diesel_ws/.repos` 已 pin `third_party/mvs_sdk`）；该仓同时提供
   `find_package(MVS CONFIG)`、`scripts/install.sh` 与 `scripts/install-plugins.sh`，
-  消费方只需 `FORAY_MVS_ROOT` 或 `CMAKE_PREFIX_PATH`。传输层插件
+  消费方只需 `DIESEL_MVS_ROOT` 或 `CMAKE_PREFIX_PATH`。传输层插件
   （`libMvUsb3vTL.so` 等）**不入库**：由 `install-plugins.sh --package <官方包>`
   从海康安装包按架构补齐，`make-bundle.sh` 可打成 tar.gz 离线分发；
   udev 规则与客户端工具仍只来自官方安装包。缺失插件时表现为枚举正常但打不开设备。
 
 Consequences:
 - mock 测试可在无 MVS 的机器上覆盖生命周期、配置顺序与时间换算；
-  `FORAY_BUILD_DRIVER_HIKVISION=ON` 找不到 SDK 时直接 `FATAL_ERROR`。
+  `DIESEL_BUILD_DRIVER_HIKVISION=ON` 找不到 SDK 时直接 `FATAL_ERROR`。
 - 代价：软件触发只有「配置」没有「触发」出口（HAL `Camera` 没有
   `trigger_once`），首期只支持自由运行与硬件触发。
 - 落地前必须先补 HAL 参数缺口：`camera` schema 与 `bind_camera_config()` 未映射
@@ -612,7 +607,7 @@ Reason: 平台仓 README 将 USB/串口归为下行设备抽象；无硬件测�
 
 Date: 2026-10-21
 
-Context: `foray_interfaces` 的 `dev` 分支消息表为空，RoboLink 仅在候选文档分支；
+Context: `diesel_interfaces` 的 `dev` 分支消息表为空，RoboLink 仅在候选文档分支；
 两者的时间戳与消息号约定冲突，电控公开分支未见 RoboLink 解析器。
 
 Decision:
@@ -621,10 +616,10 @@ Decision:
 - 双组确认帧格式、消息表、姿态反馈与失联动作后，再按正式契约调整；
 - 视觉内部角度保持 rad，按组长答复在协议适配边界转 deg——后续（2026-10-24）
   改为线上直接使用 rad，见下文；
-- 候选实现落在 `foray::platform::link`：`usb_cdc_port` · `robolink_crc` ·
+- 候选实现落在 `diesel::platform::link`：`usb_cdc_port` · `robolink_crc` ·
   `robolink_frame` · `robolink_frame_parser` · `robolink_codec` ·
   `robolink_byte_channel` · `robolink_host_link`，同包 `link` target 导出
-  `foray_platform::link`。
+  `diesel_platform::link`。
 
 Reason: 字节传输通过不代表下位机理解帧，更不能据此驱动云台或发射机构。
 
@@ -637,7 +632,7 @@ Frame parser: 接收层按字节流缓存任意读块，依候选格式的 Magic
 不代表实机收发已验收。
 
 Message codec: 平台仓承载候选协议的显式小端序列化，实现零槽/单槽/多槽帧，
-以及控制快照、状态、握手、心跳、确认与错误载荷；不依赖 `foray_auto_aim`
+以及控制快照、状态、握手、心跳、确认与错误载荷；不依赖 `diesel_auto_aim`
 的内部类型。`RoboLinkByteChannel` 只保留一帧待发送并处理部分写入，
 不自动启用射击或控制。主机侧握手、心跳、状态回读、超时和重开已离线测试；
 发送频率验收、姿态反馈和实机联调仍未完成，不能据此宣称实机通讯闭环。
@@ -652,7 +647,7 @@ Update (2026-10-24): 按最新对接口径，云台目标角线上单位由 deg 
 但现有 RoboLink 消息表缺少对应布局；未收到消息类型、分量顺序、坐标系和时间戳
 定义前，不臆造线上四元数载荷。以上仍待电控逐字节对账与实机验收。
 
-Update (2026-10-24): `foray_interfaces` PR #2 已合入 v0.2 候选契约，明确
+Update (2026-10-24): `diesel_interfaces` PR #2 已合入 v0.2 候选契约，明确
 0x30 `GIMBAL_ATTITUDE` 的 36 B 载荷、`w,x,y,z` 顺序、云台系到世界系及采样时刻。
 平台接收链新增能力位声明、字段解码与最新姿态缓存；无效位保留给消费者判断，
 不在平台层做坐标变换。仍需与 MCU 固件逐字节对账和实机验收。
@@ -666,7 +661,7 @@ IMU 采样时刻后无法按 v0.2 §4.8 做时间对齐；这些时间属不同�
 
 Date: 2026-10-24
 
-Context: 落地 `foray_platform_driver_hikvision` 时，`CameraConfig::width/height` 的
+Context: 落地 `diesel_platform_driver_hikvision` 时，`CameraConfig::width/height` 的
 「0 表示保留设备当前分辨率」在 `mvs_nodes.cpp` 被实现成无条件下发，实机 open 直接
 返回 `MV_E_GC_RANGE`（0x80000102）；同时 `MV_CC_GetImageBuffer` 的
 `MV_FRAME_OUT` 必须原样归还才能释放缓存，而 HAL 的 `FrameView` 只暴露数据指针。
@@ -701,7 +696,7 @@ Rejected:
 
 Date: 2026-10-25
 
-Context: `foray_hikvision_dump --view` 在 `kill -TERM` 后不退出，进程挂住导致
+Context: `diesel_hikvision_dump --view` 在 `kill -TERM` 后不退出，进程挂住导致
 MV_CC_OpenDevice 返回 `MV_E_ACCESS_DENIED`（0x80000203）；同时现场反馈预览窗口
 「有画面但很暗」，需要判断是渲染链路丢亮度还是相机曝光不足。
 
@@ -742,7 +737,7 @@ Rejected:
 Date: 2026-10-25
 
 Context: Hikvision GigE 相机要求「插上相机 → 一条命令 → 出图」，但网络编排
-锁在 `foray_lidar_up` 内部，相机无法复用；全仓此前没有任何 MTU 能力，而
+锁在 `diesel_lidar_up` 内部，相机无法复用；全仓此前没有任何 MTU 能力，而
 `br-lidar` 与 `br-camera` 会同时存在，旧的 `set_slave` 会静默把物理口从
 另一个桥抢走，导致另一台设备无声掉线。
 
@@ -754,7 +749,7 @@ Decision:
   （Linux 要求 slave MTU ≥ master）；MTU 失败只记 warning 不阻断；
 - 物理口已属另一桥时 `plan_link` 默认返回 `kInvalidArgument`，
   `allow_reassign_master` / `--allow-reassign-master` 才放行；
-- 把 `foray_lidar_up` 的 bootstrap 段上移到 `net/bootstrap.hpp`，雷达与相机
+- 把 `diesel_lidar_up` 的 bootstrap 段上移到 `net/bootstrap.hpp`，雷达与相机
   共用同一套 pkexec/就绪判定/退出码映射；相机独占 `br-camera`，不与雷达共桥；
 - 相机地址按 RFC 3927 规划：桥上已有 `169.254/16` 就复用，否则取
   `169.254.x/16`；固定 IP 相机取同 `/24` 的 `.1`（冲突用 `.254`）；
@@ -770,7 +765,7 @@ Reason:
 - 相机独占桥：nmcli 拉起桥会短暂断链，共桥会把雷达的取流一起震断。
 
 Alternatives:
-- 在 `foray_hikvision_up` 里复制一份 lidar_up 的 argv 拼装：短期快，但
+- 在 `diesel_hikvision_up` 里复制一份 lidar_up 的 argv 拼装：短期快，但
   helper 参数、退出码、pkexec 语义会随两边演进分叉；
 - 把 MTU 直接放进 `set_up` 的参数：会破坏 `set_up` 的幂等语义，也无法表达
   「物理口与网桥分别设置」；
@@ -786,22 +781,22 @@ Rejected:
 
 Date: 2026-10-25
 
-Context: 三个包平铺在仓根，核心包目录名与仓名同为 `foray_platform`，路径出现
-`foray_platform/foray_platform/include/...` 的 stutter；`tools/` 在 core 里指 C++ 特权
-helper、在 `foray_localization` 里却指 Python 包；polkit 资产埋在 `deploy/` 无统一落点。
-`foray_localization` 同期已采用「仓根 = 空间根 + 包平铺」的另一套命名（`_core` 后缀），
+Context: 三个包平铺在仓根，核心包目录名与仓名同为 `diesel_platform`，路径出现
+`diesel_platform/diesel_platform/include/...` 的 stutter；`tools/` 在 core 里指 C++ 特权
+helper、在 `diesel_localization` 里却指 Python 包；polkit 资产埋在 `deploy/` 无统一落点。
+`diesel_localization` 同期已采用「仓根 = 空间根 + 包平铺」的另一套命名（`_core` 后缀），
 两仓规则不一致。
 
 Decision:
 - 仓根作为 colcon 空间根，**全部源码包迁入 `src/`**；仓根只保留文档五件套、`docs/`、
   `.github/` 与构建产物目录（`build/`、`install/`、`log/`，不入库）；
-- 核心包更名 `foray_platform` → **`foray_platform_core`**：`package.xml` 名、CMake
-  `project()`、包配置导出文件名（`foray_platform_coreConfig.cmake` / `…Targets.cmake`）
-  同步；两个驱动改为 `find_package(foray_platform_core REQUIRED)`；
-- **导出命名空间保持 `foray_platform::core|hal|net|driver_*` 不变**，驱动与下游的
+- 核心包更名 `diesel_platform` → **`diesel_platform_core`**：`package.xml` 名、CMake
+  `project()`、包配置导出文件名（`diesel_platform_coreConfig.cmake` / `…Targets.cmake`）
+  同步；两个驱动改为 `find_package(diesel_platform_core REQUIRED)`；
+- **导出命名空间保持 `diesel_platform::core|hal|net|driver_*` 不变**，驱动与下游的
   `target_link_libraries` 无需修改；
 - 包内骨架固定：`include/ src/ test/ cmake/ launch/ config/ scripts/ apps/ data/`；
-  C++ 可执行小工具统一进 **`apps/`**（core 的 `foray_net_helper.cpp` 与两个驱动的
+  C++ 可执行小工具统一进 **`apps/`**（core 的 `diesel_net_helper.cpp` 与两个驱动的
   `camera_dump` / `camera_up` / `viewer` / `livox_dump` / `livox_config` / `lidar_up`）；
   非源码资产（polkit 动作与免密规则）进 **`data/polkit/`**；
 - 新增 CI 作业 `dir-layout`：校验「包不得平铺在仓根」「`src/` 下包名与目录名一致」
@@ -810,28 +805,43 @@ Decision:
 Reason:
 - 包名与仓名相同会让 `repo/repo/` 路径在所有日志、`install/` 树、报错栈里重复出现，
   而仓内已无第二个同名实体可作为区分；
-- 与 `foray_localization` 的 `_core` 后缀对齐后，两仓「核心包叫什么」不再是一个需要
+- 与 `diesel_localization` 的 `_core` 后缀对齐后，两仓「核心包叫什么」不再是一个需要
   现场决策的问题；把规则写进 CI 才能防止下次又漂；
 - `tools/` 一词同时表示「C++ 可执行小工具」和「Python 离线工具包」，是本仓与
   localization 之间最容易误读的一处；按「可执行 → `apps/`，脚本包 → `_tools`」切分；
 - polkit 动作与免密规则属于安装资产而非源码，放进 `data/` 后 `install` 规则与
   `tree.md` 都能一句话说清其归属；
-- 命名空间不动是刻意取舍：`foray_platform::hal` 已被两个驱动和后续 ROS 适配层引用，
+- 命名空间不动是刻意取舍：`diesel_platform::hal` 已被两个驱动和后续 ROS 适配层引用，
   为一次目录重构改它，收益小于让下游全部改链接。
 
 Alternatives:
 - 保持包平铺、只把核心包改名：解决 stutter 但 `src/` 缺失，构建产物与源码仍在同一层；
-- 同时把命名空间改为 `foray_platform_core::`：语义更自洽，但要改全部驱动与下游链接，
+- 同时把命名空间改为 `diesel_platform_core::`：语义更自洽，但要改全部驱动与下游链接，
   且 ament 生态里「包名 ≠ 命名空间」很常见；
-- 把 `net` 子系统拆成独立包 `foray_platform_net`：当前 6 个源文件、单一 owner，
+- 把 `net` 子系统拆成独立包 `diesel_platform_net`：当前 6 个源文件、单一 owner，
   拆分只为名字好看，不值得多一次跨包链接与版本协调。
 
 Rejected:
 - 继续用 `tools/` 承载可执行小工具（与 localization 的 `_tools` 包语义冲突，且
   `.gitignore` 里没有对应豁免规则）；
 - 把 polkit 资产留在包根 `deploy/`（仓根已无 `deploy/` 约定，包内也无同类先例）；
-- 让 `foray_platform_core` 的库 target 同时改名为 `core`：收益仅是少一次前缀，
-  却要让 core 内全部测试与 `foray_platform::core` 别名一起动。
+- 让 `diesel_platform_core` 的库 target 同时改名为 `core`：收益仅是少一次前缀，
+  却要让 core 内全部测试与 `diesel_platform::core` 别名一起动。
 
 ## 已确认遗留
 - `package.xml` 的 `<license>` 仍为 `TODO`，等组织确认许可证（与本决策无关）。
+
+## 2026-11-14 相机tick频率兼容与错误诊断（PR #6修订）
+
+Context: PR #6基于命名迁移前的目录，且频率查询将所有失败静默降为0。
+同时open成功路径会清除configure阶段累计的SDK错误，新增计数也无法被消费者看到。
+
+Decision:
+- 基于最新dev的Diesel目录复现修订，保留GigE/通用/旧节点的查询次序与uint32范围限制。
+- 只将MV_E_SUPPORT视为预期兼容失败；其他失败保留次数和最后厂商码，非法数值单独计数。
+- SDK诊断清零移到配置前，后备查询成功不清除此前异常。
+- mock测试验证节点优先级、非法值回退、全失败和重开清零，无硬件操作。
+
+Reason: 频率不可用可以降级，但现场必须区分型号不支持与实际读取错误。
+不改变公共HAL接口、默认时间源或跨设备时钟语义。日期作为独立新条目记录，
+不把本次修订插入2026-10旧条目造成时间歧义。

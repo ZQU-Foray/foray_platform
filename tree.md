@@ -19,7 +19,7 @@
 ├── tree.md                      本文件
 ├── CODEOWNERS                   Review 自动分派
 ├── .clang-format                组织 C/C++ 格式配置（CI lint-c 依赖）
-├── .foray-layer                 所属层与依赖边界（CI 校验）
+├── .diesel-layer                 所属层与依赖边界（CI 校验）
 ├── .gitignore
 ├── docs/
 │   ├── time_and_clock.md        时钟域与 use_sim_time 语义
@@ -35,12 +35,12 @@
 │   ├── sdk_packaging_survey.md  厂商相机 SDK 打包与调用横评
 │   └── robolink_protocol_review.md  候选 RoboLink 线协议对账（待电控逐字节确认）
 ├── src/
-│   ├── foray_platform_core/     合并包：L1 core + L2 hal（不依赖 ROS）
+│   ├── diesel_platform_core/     合并包：L1 core + L2 hal（不依赖 ROS）
 │   │   ├── CMakeLists.txt
 │   │   ├── package.xml          build_type=cmake，供 colcon 识别
 │   │   ├── cmake/
-│   │   │   └── foray_platform_coreConfig.cmake.in
-│   │   ├── include/foray/platform/
+│   │   │   └── diesel_platform_coreConfig.cmake.in
+│   │   ├── include/diesel/platform/
 │   │   │   ├── time/            Duration · Timestamp · Clock
 │   │   │   ├── param/           schema · snapshot · store · source · manager
 │   │   │   ├── result/          ErrorCode · Error · Result<T>
@@ -65,15 +65,15 @@
 │   │   │   ├── net/             MTU / 计划 / 回滚 / 跨桥 / bootstrap 单测
 │   │   │   ├── link/            设备生命周期 · CRC · 组帧 · 解析 · 编解码 · 链路单测
 │   │   │   └── hal/             类型 / 帧池与租约 / ConfigBinder / Fake 传感器单测
-│   │   ├── apps/foray_net_helper.cpp  特权网络自举 helper（pkexec）
+│   │   ├── apps/diesel_net_helper.cpp  特权网络自举 helper（pkexec）
 │   │   └── data/polkit/         polkit 动作与可选免密规则
-│   ├── foray_platform_driver_livox/  Livox SDK2 驱动（纯 CMake，不依赖 ROS）
+│   ├── diesel_platform_driver_livox/  Livox SDK2 驱动（纯 CMake，不依赖 ROS）
 │   │   ├── CMakeLists.txt
 │   │   ├── package.xml
 │   │   ├── cmake/
 │   │   │   ├── FindLivoxSDK2.cmake  暴露 LivoxSDK2::shared
-│   │   │   └── foray_platform_driver_livoxConfig.cmake.in
-│   │   ├── include/foray/platform/driver/livox/
+│   │   │   └── diesel_platform_driver_livoxConfig.cmake.in
+│   │   ├── include/diesel/platform/driver/livox/
 │   │   │   └── lidar.hpp        公共工厂（无 SDK 类型）
 │   │   ├── src/livox/
 │   │   │   ├── lidar.cpp/.hpp   生命周期、配置、解析线程
@@ -91,13 +91,13 @@
 │   │   │   ├── livox_config.cpp 雷达参数读回/下发/再校验
 │   │   │   └── lidar_up.cpp     一键自举：网络 + 配置 + 取帧健康确认
 │   │   └── test/livox/          mock 单测 + backend 能力测试
-│   └── foray_platform_driver_hikvision/  海康 MVS 驱动（纯 CMake，不依赖 ROS）
+│   └── diesel_platform_driver_hikvision/  海康 MVS 驱动（纯 CMake，不依赖 ROS）
 │       ├── CMakeLists.txt
 │       ├── package.xml
 │       ├── cmake/
 │       │   ├── FindMVS.cmake    暴露 MVS::MvCameraControl（可与官方 CONFIG 互换）
-│       │   └── foray_platform_driver_hikvisionConfig.cmake.in
-│       ├── include/foray/platform/driver/hikvision/
+│       │   └── diesel_platform_driver_hikvisionConfig.cmake.in
+│       ├── include/diesel/platform/driver/hikvision/
 │       │   └── camera.hpp       公共工厂（无 SDK 类型）
 │       ├── src/hikvision/
 │       │   ├── camera.cpp/.hpp  生命周期、设备选择、取流线程、帧发布
@@ -123,22 +123,24 @@
 > L2 HAL（同包 `hal` target）已落地；`link` target 的 USB CDC 与候选 RoboLink 编解码、主机链路
 > 已离线全绿（尚无装配程序，未与 MCU 固件联调）；Livox 驱动已落地（mock 全绿，真实 SDK 待部署验证）；
 > Hikvision 驱动已落地（mock 全绿，MV-CS004-10GC 实机取流已验证）；ROS 适配层按计划加入。
-> 时间节点按 GigE/通用/旧型号顺序兼容查询；相机设备 tick 与主机收图时刻分别保存。
+
+> PR #6本地修订：`mvs_nodes`兼容三类tick频率节点；读取异常保留计数和厂商码，
+> 配置映射与相机生命周期测试覆盖回退、非法范围及打开后诊断不丢失。
 
 ## 目录职责
 
 | 路径 | 职责 | 依赖约束 |
 |---|---|---|
-| `src/foray_platform_core/` | L1 core：时间/时钟、参数系统、配置、错误码；L2 hal 抽象 | **不得依赖 ROS 2、不得依赖任何业务仓** |
-| `src/foray_platform_driver_livox/` | L2 传感器驱动（HAL 插件） | 只依赖 `foray_platform::hal` / `::net` |
-| `src/foray_platform_driver_hikvision/` | L2 传感器驱动（HAL 插件） | 只依赖 `foray_platform::hal` / `::net` |
+| `src/diesel_platform_core/` | L1 core：时间/时钟、参数系统、配置、错误码；L2 hal 抽象 | **不得依赖 ROS 2、不得依赖任何业务仓** |
+| `src/diesel_platform_driver_livox/` | L2 传感器驱动（HAL 插件） | 只依赖 `diesel_platform::hal` / `::net` |
+| `src/diesel_platform_driver_hikvision/` | L2 传感器驱动（HAL 插件） | 只依赖 `diesel_platform::hal` / `::net` |
 | `docs/` | 设计文档 | — |
-| `.foray-layer` | 声明 `layer: L1`、`depends_on_layers: [X2]` | CI 校验依赖方向 |
+| `.diesel-layer` | 声明 `layer: L1`、`depends_on_layers: [X2]` | CI 校验依赖方向 |
 
 ## 命名规则
 
 - 包目录名与 `package.xml` 的 `<name>` 必须一致，且**不得与仓同名**（核心包用 `_core` 后缀）。
-- 包名格式：`foray_<层职能>[_<角色>]`；角色后缀取封闭词表：`core` `hal` `net` `driver_<vendor>` `ros` `bringup`。
+- 包名格式：`diesel_<层职能>[_<角色>]`；角色后缀取封闭词表：`core` `hal` `net` `driver_<vendor>` `ros` `bringup`。
 - C++ 可执行小工具进 `apps/`，不使用 `tools/`；非源码资产（polkit/udev/规则）进 `data/`。
 
 ## 记录约束

@@ -1,7 +1,7 @@
 # 海康 / Livox SDK 封装调研
 
 > 范围：L2 下行 HAL 的相机与激光雷达驱动封装。
-> 结论用于后续 `foray_platform_hal` 与驱动插件的设计，不代表接口已冻结。
+> 结论用于后续 `diesel_platform_hal` 与驱动插件的设计，不代表接口已冻结。
 
 ## 1. 结论摘要
 
@@ -10,7 +10,7 @@
 2. **SDK 类型不得进入 HAL 公共头文件**。每个驱动内部包一层 `Api` 函数表
    （生产实现绑定真实 SDK，测试绑定 mock），这是 CI 无硬件、无 SDK 也能测的关键。
 3. **海康 MVS 是闭源 SDK**：不要把 `.so`/`.a`/头文件提交进仓库；用系统安装或
-   `FORAY_MVS_ROOT` 指定。官方提供 `aarch64` 包，Jetson 可用。
+   `DIESEL_MVS_ROOT` 指定。官方提供 `aarch64` 包，Jetson 可用。
 4. **Livox-SDK2 是 MIT 许可**，但**没有 CMake package config**，需要
    `find_path` / `find_library` 或 pin commit 后源码集成。Mid-360 由 SDK2 支持。
 5. **`livox_ros_driver2` 官方明确声明「不推荐用于量产，仅用于测试」**。
@@ -57,7 +57,7 @@
 
 ### 2.3 Livox 现状
 
-- `foray_sentry_nav` 当前方案是 `Livox Mid360 + livox_ros_driver2 + point_lio`；
+- `diesel_sentry_nav` 当前方案是 `Livox Mid360 + livox_ros_driver2 + point_lio`；
 - 组织规范（`foray_docs/repository_structure.md` §4.2）把 `livox_ros_driver2`
   列为「传感器驱动，fork + pin commit」；
 - 但 `livox_ros_driver2` README 明确写着：**「not recommended for mass production
@@ -267,11 +267,11 @@ MV_CC_DestroyHandle
 
 ### 4.4 构建与部署
 
-- 不提交 SDK 二进制与头文件；用 `FORAY_MVS_ROOT`（或 `find_path`/`find_library`）定位；
+- 不提交 SDK 二进制与头文件；用 `DIESEL_MVS_ROOT`（或 `find_path`/`find_library`）定位；
 - 链接 `MvCameraControl`，运行时确保 `LD_LIBRARY_PATH` 或 rpath 能找到；
 - 部署时执行 MVS 安装包的 udev 规则，否则普通用户无权限打开 USB 相机；
 - CI 使用 mock API，不安装 MVS SDK；
-- 驱动包用 CMake 选项显式开关：`FORAY_BUILD_DRIVER_HIKVISION=ON/OFF`；
+- 驱动包用 CMake 选项显式开关：`DIESEL_BUILD_DRIVER_HIKVISION=ON/OFF`；
   开关为 ON 但找不到 SDK 时**直接失败**，不要静默跳过。
 
 ## 5. Livox SDK2 封装
@@ -420,17 +420,17 @@ point_time_ns      = packet_timestamp + i * point_interval_ns
 | HAL 单测 | 帧结构、队列、`FrameLease`、状态机 | 否 |
 | 驱动单测 | mock `Api` 注入：正常帧、坏包、超时、掉线、恢复 | 否 |
 | 解析单测 | Livox 高/低/球/双回波包；海康 Bayer/Mono 元数据 | 否 |
-| CI | `FORAY_BUILD_DRIVER_*=OFF`，只构建 HAL + mock | 否 |
+| CI | `DIESEL_BUILD_DRIVER_*=OFF`，只构建 HAL + mock | 否 |
 | HIL | 实机取流 N 帧；时间戳单调；拔插恢复；30 分钟无泄漏 | 是 |
 | 融合冒烟 | Mid-360 + point_lio；相机 + 自瞄识别 | 是 |
 
 ## 8. 建议的包划分
 
 ```text
-foray_platform_hal/                 # 纯 C++：Sensor/Camera/Lidar 接口、帧类型、FrameLease
-foray_platform_driver_hikvision/    # 海康 MVS 驱动插件，依赖 hal
-foray_platform_driver_livox/        # Livox SDK2 驱动插件，依赖 hal
-foray_platform_ros/                 # ROS 2 适配：Image / PointCloud2 / Imu
+diesel_platform_hal/                 # 纯 C++：Sensor/Camera/Lidar 接口、帧类型、FrameLease
+diesel_platform_driver_hikvision/    # 海康 MVS 驱动插件，依赖 hal
+diesel_platform_driver_livox/        # Livox SDK2 驱动插件，依赖 hal
+diesel_platform_ros/                 # ROS 2 适配：Image / PointCloud2 / Imu
 ```
 
 依赖方向：
@@ -448,7 +448,7 @@ ros -> hal <- drivers
 
 ## 9. 实施顺序建议
 
-1. `foray_platform_hal`：接口 + 帧类型 + `FrameLease` + mock 驱动 + 单测；
+1. `diesel_platform_hal`：接口 + 帧类型 + `FrameLease` + mock 驱动 + 单测；
 2. 海康驱动：先跑通 `GetImageBuffer` → HAL 帧 → 测试程序，不做格式转换；
 3. Livox 驱动：先跑通单雷达点云/IMU → HAL 帧，再补多雷达与恢复；
 4. ROS 适配：`Image` / `PointCloud2` / `Imu` 话题，完成 P1 验收；
