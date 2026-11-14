@@ -1,9 +1,11 @@
 #include "mvs_nodes.hpp"
 
+#include <limits>
 #include <string>
 
 #include "diesel/platform/hal/config.hpp"
 #include "diesel/platform/result/error.hpp"
+#include "mvs_error.hpp"
 
 namespace diesel::platform::driver::hikvision::detail {
 
@@ -97,12 +99,10 @@ Result<void> apply_geometry(MvsApi& api, void* handle, const hal::CameraConfig& 
     if (auto status = set_int_if_set(api, handle, node::kHeight, config.height); !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kOffsetX, config.offset_x);
-        !status.ok()) {
+    if (auto status = set_int_if_set(api, handle, node::kOffsetX, config.offset_x); !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kOffsetY, config.offset_y);
-        !status.ok()) {
+    if (auto status = set_int_if_set(api, handle, node::kOffsetY, config.offset_y); !status.ok()) {
         return status;
     }
     if (auto status =
@@ -110,28 +110,27 @@ Result<void> apply_geometry(MvsApi& api, void* handle, const hal::CameraConfig& 
         !status.ok()) {
         return status;
     }
+    if (auto status = set_int_if_set(api, handle, node::kBinningVertical, config.binning_vertical);
+        !status.ok()) {
+        return status;
+    }
     if (auto status =
-            set_int_if_set(api, handle, node::kBinningVertical, config.binning_vertical);
+            set_int_if_set(api, handle, node::kDecimationHorizontal, config.decimation_horizontal);
         !status.ok()) {
         return status;
     }
-    if (auto status = set_int_if_set(api, handle, node::kDecimationHorizontal,
-                                     config.decimation_horizontal);
-        !status.ok()) {
-        return status;
-    }
-    if (auto status = set_int_if_set(api, handle, node::kDecimationVertical,
-                                     config.decimation_vertical);
+    if (auto status =
+            set_int_if_set(api, handle, node::kDecimationVertical, config.decimation_vertical);
         !status.ok()) {
         return status;
     }
 
     const std::string_view pixel_format = to_mvs_pixel_format(config.pixel_format);
     if (pixel_format.empty()) {
-        return Result<void>(make_error(
-            ErrorCode::kUnsupportedFormat,
-            std::string("Hikvision 驱动只支持 8 位 Mono/Bayer，当前配置为 ") +
-                std::string(hal::to_string(config.pixel_format))));
+        return Result<void>(
+            make_error(ErrorCode::kUnsupportedFormat,
+                       std::string("Hikvision 驱动只支持 8 位 Mono/Bayer，当前配置为 ") +
+                           std::string(hal::to_string(config.pixel_format))));
     }
     return api.set_enum_by_string(handle, node::kPixelFormat, pixel_format);
 }
@@ -148,8 +147,8 @@ Result<void> apply_frame_rate(MvsApi& api, void* handle, const hal::CameraConfig
 }
 
 Result<void> apply_exposure(MvsApi& api, void* handle, const hal::CameraConfig& config) {
-    if (auto status =
-            api.set_enum_by_string(handle, node::kExposureAuto, to_mvs_auto_mode(config.exposure_auto));
+    if (auto status = api.set_enum_by_string(handle, node::kExposureAuto,
+                                             to_mvs_auto_mode(config.exposure_auto));
         !status.ok()) {
         return status;
     }
@@ -179,8 +178,8 @@ Result<void> apply_gain(MvsApi& api, void* handle, const hal::CameraConfig& conf
     if (auto status = set_optional_float(api, handle, node::kGain, config.gain_db); !status.ok()) {
         return status;
     }
-    if (auto status = set_optional_float(api, handle, node::kGainLowerLimit,
-                                         config.gain_auto_lower_db);
+    if (auto status =
+            set_optional_float(api, handle, node::kGainLowerLimit, config.gain_auto_lower_db);
         !status.ok()) {
         return status;
     }
@@ -202,8 +201,7 @@ Result<void> apply_trigger(MvsApi& api, void* handle, const hal::CameraConfig& c
         return Result<void>(make_error(ErrorCode::kInvalidArgument,
                                        "camera.trigger.mode 无法映射到 MVS TriggerSource"));
     }
-    if (auto status = api.set_enum_by_string(handle, node::kTriggerSource, source);
-        !status.ok()) {
+    if (auto status = api.set_enum_by_string(handle, node::kTriggerSource, source); !status.ok()) {
         return status;
     }
 
@@ -217,8 +215,7 @@ Result<void> apply_trigger(MvsApi& api, void* handle, const hal::CameraConfig& c
         !status.ok()) {
         return status;
     }
-    return set_optional_float(api, handle, node::kLineDebouncerTime,
-                              config.trigger.debounce_us);
+    return set_optional_float(api, handle, node::kLineDebouncerTime, config.trigger.debounce_us);
 }
 
 /// @brief GigE 调优与 PTP：现场网卡差异大，写失败只计数，不阻断 open。
@@ -279,8 +276,7 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
             if (auto status = api.set_bool(handle, node::kFrameRateEnable, true); !status.ok()) {
                 return status;
             }
-            if (auto status = api.set_float(handle, node::kFrameRate, *frame_rate);
-                !status.ok()) {
+            if (auto status = api.set_float(handle, node::kFrameRate, *frame_rate); !status.ok()) {
                 return status;
             }
         } else {
@@ -301,8 +297,7 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
     if (tuning.exposure_us.has_value()) {
         const auto& exposure = *tuning.exposure_us;
         if (exposure.has_value()) {
-            if (auto status = api.set_float(handle, node::kExposureTime, *exposure);
-                !status.ok()) {
+            if (auto status = api.set_float(handle, node::kExposureTime, *exposure); !status.ok()) {
                 return status;
             }
         } else {
@@ -357,8 +352,7 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
 
     if (tuning.trigger_debounce_us.has_value()) {
         const auto& debounce = *tuning.trigger_debounce_us;
-        if (auto status =
-                api.set_float(handle, node::kLineDebouncerTime, debounce.value_or(0.0));
+        if (auto status = api.set_float(handle, node::kLineDebouncerTime, debounce.value_or(0.0));
             !status.ok()) {
             return status;
         }
@@ -373,12 +367,28 @@ bool query_ptp_slave(MvsApi& api, void* handle) noexcept {
     return status.ok() && status.value() == "Slave";
 }
 
-std::uint32_t query_tick_frequency(MvsApi& api, void* handle) noexcept {
-    auto status = api.get_int(handle, node::kDeviceTicksFrequency);
-    if (!status.ok() || status.value() <= 0) {
-        return 0;
+std::uint32_t query_tick_frequency(MvsApi& api, void* handle,
+                                   TickFrequencyDiagnostics* diagnostics) noexcept {
+    TickFrequencyDiagnostics local;
+    auto& report = diagnostics ? *diagnostics : local;
+    report = {};
+    for (const auto name : {node::kGevTimestampTickFrequency, node::kTimestampTickFrequency,
+                            node::kDeviceTicksFrequency}) {
+        const auto status = api.get_int(handle, name);
+        if (!status.ok()) {
+            if (status.error().vendor_code != static_cast<std::int32_t>(mvs_error::kSupport)) {
+                ++report.read_errors;
+                report.last_vendor_code = status.error().vendor_code;
+            }
+            continue;
+        }
+        if (status.value() <= 0 || status.value() > std::numeric_limits<std::uint32_t>::max()) {
+            ++report.invalid_values;
+            continue;
+        }
+        return static_cast<std::uint32_t>(status.value());
     }
-    return static_cast<std::uint32_t>(status.value());
+    return 0;
 }
 
 TimestampConfig make_timestamp_config(const hal::CameraConfig& config, bool ptp_slave,
@@ -387,8 +397,8 @@ TimestampConfig make_timestamp_config(const hal::CameraConfig& config, bool ptp_
     result.source = config.timestamp_source;
     result.device_to_host_offset_ns = config.device_to_host_offset_ns.value_or(0);
     // 曝光延迟用 double 配置，换算到纳秒后按整型参与计算。
-    result.exposure_to_host_latency_ns = static_cast<std::int64_t>(
-        config.exposure_to_host_latency_ns.value_or(0.0));
+    result.exposure_to_host_latency_ns =
+        static_cast<std::int64_t>(config.exposure_to_host_latency_ns.value_or(0.0));
     result.allow_unsynced_stamp = config.allow_unsynced_stamp;
     // PTP 只在显式开启时采纳，避免设备单方面进入 Slave 就打上 kPtp 标记。
     result.ptp_slave = config.enable_ptp && ptp_slave;

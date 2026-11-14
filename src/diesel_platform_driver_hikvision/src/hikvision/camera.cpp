@@ -50,8 +50,7 @@ void sleep_microseconds(std::uint32_t microseconds) {
 /// 主机同时持有多个网段地址时（例如 `192.168.1.51/24` 与 `169.254.114.1/16`），
 /// MVS 会把同一台 GigE 相机枚举两次，两条记录的 serial/IP 完全相同。不去重会让
 /// `model` 选择路径误判 `kDeviceAmbiguous`（文档 §4.2）。
-std::vector<DeviceDescriptor> deduplicate_by_serial(
-    const std::vector<DeviceDescriptor>& devices) {
+std::vector<DeviceDescriptor> deduplicate_by_serial(const std::vector<DeviceDescriptor>& devices) {
     std::vector<DeviceDescriptor> unique;
     unique.reserve(devices.size());
     for (const auto& device : devices) {
@@ -60,11 +59,10 @@ std::vector<DeviceDescriptor> deduplicate_by_serial(
             unique.push_back(device);
             continue;
         }
-        const bool seen = std::any_of(unique.begin(), unique.end(),
-                                      [&device](const DeviceDescriptor& candidate) {
-                                          return !candidate.serial.empty() &&
-                                                 candidate.serial == device.serial;
-                                      });
+        const bool seen =
+            std::any_of(unique.begin(), unique.end(), [&device](const DeviceDescriptor& candidate) {
+                return !candidate.serial.empty() && candidate.serial == device.serial;
+            });
         if (!seen) {
             unique.push_back(device);
         }
@@ -72,9 +70,10 @@ std::vector<DeviceDescriptor> deduplicate_by_serial(
     return unique;
 }
 
-std::vector<DeviceDescriptor> filter_by(
-    const std::vector<DeviceDescriptor>& devices,
-    bool (*predicate)(const DeviceDescriptor&, const std::string&), const std::string& wanted) {
+std::vector<DeviceDescriptor> filter_by(const std::vector<DeviceDescriptor>& devices,
+                                        bool (*predicate)(const DeviceDescriptor&,
+                                                          const std::string&),
+                                        const std::string& wanted) {
     std::vector<DeviceDescriptor> matches;
     for (const auto& device : devices) {
         if (predicate(device, wanted)) {
@@ -108,8 +107,8 @@ bool same_ip(const DeviceDescriptor& device, const std::string& wanted) {
  */
 Result<DeviceDescriptor> select_device(const std::vector<DeviceDescriptor>& devices,
                                        const hal::DeviceSelector& selector) {
-    if (selector.serial.empty() && selector.user_defined_name.empty() &&
-        selector.model.empty() && selector.ip_address.empty()) {
+    if (selector.serial.empty() && selector.user_defined_name.empty() && selector.model.empty() &&
+        selector.ip_address.empty()) {
         return Result<DeviceDescriptor>(make_error(
             ErrorCode::kInvalidArgument,
             "camera.selector 为空：至少给出 serial / user_defined_name / model / ip_address 之一"));
@@ -133,18 +132,19 @@ Result<DeviceDescriptor> select_device(const std::vector<DeviceDescriptor>& devi
                            "未找到 user_defined_name=" + selector.user_defined_name + " 的相机"));
         }
         if (matches.size() > 1) {
-            return Result<DeviceDescriptor>(make_error(
-                ErrorCode::kDeviceAmbiguous,
-                "user_defined_name=" + selector.user_defined_name + " 命中 " +
-                    std::to_string(matches.size()) + " 台相机，请改用 serial"));
+            return Result<DeviceDescriptor>(
+                make_error(ErrorCode::kDeviceAmbiguous,
+                           "user_defined_name=" + selector.user_defined_name + " 命中 " +
+                               std::to_string(matches.size()) + " 台相机，请改用 serial"));
         }
         return Result<DeviceDescriptor>(matches.front());
     }
 
     if (!selector.ip_address.empty()) {
         if (selector.transport == hal::Transport::kUsb3) {
-            return Result<DeviceDescriptor>(make_error(
-                ErrorCode::kInvalidArgument, "camera.ip_address 只适用于 GigE 传输，不能用于 USB3"));
+            return Result<DeviceDescriptor>(
+                make_error(ErrorCode::kInvalidArgument,
+                           "camera.ip_address 只适用于 GigE 传输，不能用于 USB3"));
         }
         const auto matches = filter_by(devices, &same_ip, selector.ip_address);
         if (matches.empty()) {
@@ -153,9 +153,9 @@ Result<DeviceDescriptor> select_device(const std::vector<DeviceDescriptor>& devi
         }
         if (matches.size() > 1) {
             return Result<DeviceDescriptor>(
-                make_error(ErrorCode::kDeviceAmbiguous,
-                           "ip=" + selector.ip_address + " 命中 " + std::to_string(matches.size()) +
-                               " 台相机，请改用 serial"));
+                make_error(ErrorCode::kDeviceAmbiguous, "ip=" + selector.ip_address + " 命中 " +
+                                                            std::to_string(matches.size()) +
+                                                            " 台相机，请改用 serial"));
         }
         return Result<DeviceDescriptor>(matches.front());
     }
@@ -172,16 +172,16 @@ Result<DeviceDescriptor> select_device(const std::vector<DeviceDescriptor>& devi
     // 因此只有显式给了非 0 index 才认，否则一律要求调用方补 serial 或显式 index——
     // 默认取第 0 台正是 HAL 明令禁止的行为。
     if (selector.index == 0) {
-        return Result<DeviceDescriptor>(make_error(
-            ErrorCode::kDeviceAmbiguous,
-            "model=" + selector.model + " 命中 " + std::to_string(matches.size()) +
-                " 台相机，请改用 serial 或显式指定 camera.index"));
+        return Result<DeviceDescriptor>(
+            make_error(ErrorCode::kDeviceAmbiguous,
+                       "model=" + selector.model + " 命中 " + std::to_string(matches.size()) +
+                           " 台相机，请改用 serial 或显式指定 camera.index"));
     }
     if (selector.index >= matches.size()) {
-        return Result<DeviceDescriptor>(make_error(
-            ErrorCode::kDeviceNotFound,
-            "model=" + selector.model + " 命中 " + std::to_string(matches.size()) +
-                " 台相机，camera.index=" + std::to_string(selector.index) + " 越界"));
+        return Result<DeviceDescriptor>(
+            make_error(ErrorCode::kDeviceNotFound,
+                       "model=" + selector.model + " 命中 " + std::to_string(matches.size()) +
+                           " 台相机，camera.index=" + std::to_string(selector.index) + " 越界"));
     }
     return Result<DeviceDescriptor>(matches[selector.index]);
 }
@@ -232,10 +232,10 @@ hal::SensorStats CameraImpl::stats() const noexcept {
     result.reconnects = reconnects_.load(std::memory_order_relaxed);
     result.last_sequence = last_sequence_.load(std::memory_order_relaxed);
     result.last_error_vendor_code = last_vendor_code_.load(std::memory_order_relaxed);
-    result.last_frame_stamp = time::Timestamp::from_nanoseconds(
-        last_frame_stamp_ns_.load(std::memory_order_relaxed));
-    result.last_frame_receive_stamp = time::Timestamp::from_nanoseconds(
-        last_receive_stamp_ns_.load(std::memory_order_relaxed));
+    result.last_frame_stamp =
+        time::Timestamp::from_nanoseconds(last_frame_stamp_ns_.load(std::memory_order_relaxed));
+    result.last_frame_receive_stamp =
+        time::Timestamp::from_nanoseconds(last_receive_stamp_ns_.load(std::memory_order_relaxed));
     return result;
 }
 
@@ -298,6 +298,9 @@ Result<void> CameraImpl::open_locked() {
         return fail(status.error());
     }
 
+    // 配置阶段的可选读取失败也属于本次打开的诊断，成功后不能再次清零。
+    sdk_errors_.store(0, std::memory_order_relaxed);
+    last_vendor_code_.store(0, std::memory_order_relaxed);
     if (auto status = configure_locked(selected.value()); !status.ok()) {
         return fail(status.error());
     }
@@ -313,10 +316,8 @@ Result<void> CameraImpl::open_locked() {
     frames_dropped_.store(0, std::memory_order_relaxed);
     bytes_received_.store(0, std::memory_order_relaxed);
     timeouts_.store(0, std::memory_order_relaxed);
-    sdk_errors_.store(0, std::memory_order_relaxed);
     consecutive_errors_.store(0, std::memory_order_relaxed);
     last_sequence_.store(0, std::memory_order_relaxed);
-    last_vendor_code_.store(0, std::memory_order_relaxed);
     last_frame_stamp_ns_.store(0, std::memory_order_relaxed);
     last_receive_stamp_ns_.store(0, std::memory_order_relaxed);
     sequence_ = 0;
@@ -334,7 +335,13 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     sdk_errors_.fetch_add(optional_errors, std::memory_order_relaxed);
 
     const bool ptp_slave = query_ptp_slave(*api_, handle_);
-    const std::uint32_t tick_frequency = query_tick_frequency(*api_, handle_);
+    TickFrequencyDiagnostics tick_diagnostics;
+    const std::uint32_t tick_frequency = query_tick_frequency(*api_, handle_, &tick_diagnostics);
+    sdk_errors_.fetch_add(tick_diagnostics.read_errors + tick_diagnostics.invalid_values,
+                          std::memory_order_relaxed);
+    if (tick_diagnostics.read_errors != 0) {
+        last_vendor_code_.store(tick_diagnostics.last_vendor_code, std::memory_order_relaxed);
+    }
 
     // 自动包长：只对 GigE 有意义，配置显式给了 packet_size 时不覆盖。
     if (config_.packet_size == 0 && device.transport == hal::Transport::kGigE) {
@@ -352,8 +359,8 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     auto width = api_->get_int(handle_, node::kWidth);
     auto height = api_->get_int(handle_, node::kHeight);
     if (!width.ok() || !height.ok() || width.value() <= 0 || height.value() <= 0) {
-        return Result<void>(make_error(
-            ErrorCode::kInternal, "无法读取相机实际分辨率（Width/Height 节点读取失败）"));
+        return Result<void>(make_error(ErrorCode::kInternal,
+                                       "无法读取相机实际分辨率（Width/Height 节点读取失败）"));
     }
 
     // 帧元数据里的曝光/增益默认是 0（未开 chunk），这里读一次节点作为兜底值。
@@ -372,15 +379,15 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
     // 只支持 8 位 Mono/Bayer，字节数就是像素数；这一点由 apply_config 的像素格式校验保证。
     const auto frame_bytes =
         static_cast<std::size_t>(width.value()) * static_cast<std::size_t>(height.value());
-    auto slots = static_cast<std::size_t>(
-        std::max<std::uint32_t>(kMinimumPoolSlots, config_.buffer_count));
+    auto slots =
+        static_cast<std::size_t>(std::max<std::uint32_t>(kMinimumPoolSlots, config_.buffer_count));
     if (config_.pool_memory_limit_bytes != 0 &&
         frame_bytes * slots > config_.pool_memory_limit_bytes) {
         if (frame_bytes * kMinimumPoolSlots > config_.pool_memory_limit_bytes) {
-            return Result<void>(make_error(
-                ErrorCode::kFrameTooLarge,
-                "camera.pool_memory_limit_bytes 太小：单帧 " + std::to_string(frame_bytes) +
-                    " B，至少要能放下 " + std::to_string(kMinimumPoolSlots) + " 帧"));
+            return Result<void>(make_error(ErrorCode::kFrameTooLarge,
+                                           "camera.pool_memory_limit_bytes 太小：单帧 " +
+                                               std::to_string(frame_bytes) + " B，至少要能放下 " +
+                                               std::to_string(kMinimumPoolSlots) + " 帧"));
         }
         slots = kMinimumPoolSlots;
     }
@@ -390,9 +397,9 @@ Result<void> CameraImpl::configure_locked(const DeviceDescriptor& device) {
         // 先创建空池再填入像素格式等“每帧固定”字段，取流时只改序号与时间。
         pool_->payload_size();
     } catch (const std::bad_alloc&) {
-        return Result<void>(make_error(
-            ErrorCode::kInternal, "帧池内存分配失败：需要 " + std::to_string(slots) + " × " +
-                                      std::to_string(frame_bytes) + " B"));
+        return Result<void>(
+            make_error(ErrorCode::kInternal, "帧池内存分配失败：需要 " + std::to_string(slots) +
+                                                 " × " + std::to_string(frame_bytes) + " B"));
     }
 
     {
@@ -418,8 +425,7 @@ Result<void> CameraImpl::start_locked() {
     }
 
     // MV_CC_SetImageNodeNum 必须在 StartGrabbing 之前；节点不存在时只计数不阻断。
-    if (auto status = api_->set_image_node_count(handle_, config_.sdk_node_count);
-        !status.ok()) {
+    if (auto status = api_->set_image_node_count(handle_, config_.sdk_node_count); !status.ok()) {
         sdk_errors_.fetch_add(1, std::memory_order_relaxed);
         last_vendor_code_.store(status.error().vendor_code, std::memory_order_relaxed);
     }
@@ -435,8 +441,8 @@ Result<void> CameraImpl::start_locked() {
     } catch (const std::system_error& error) {
         static_cast<void>(api_->stop_grabbing(handle_));
         state_.store(hal::DeviceState::kError, std::memory_order_release);
-        return Result<void>(make_error(
-            ErrorCode::kInternal, std::string("创建取流线程失败: ") + error.what()));
+        return Result<void>(
+            make_error(ErrorCode::kInternal, std::string("创建取流线程失败: ") + error.what()));
     }
 
     state_.store(hal::DeviceState::kStreaming, std::memory_order_release);
@@ -490,8 +496,7 @@ void CameraImpl::release_resources_locked() {
 Result<void> CameraImpl::recover_locked() {
     const auto current = state_.load(std::memory_order_acquire);
     if (current == hal::DeviceState::kClosed) {
-        return Result<void>(
-            make_error(ErrorCode::kNotOpen, "recover() 之前必须先 open()"));
+        return Result<void>(make_error(ErrorCode::kNotOpen, "recover() 之前必须先 open()"));
     }
     if (current == hal::DeviceState::kRecovering) {
         return Result<void>(make_error(ErrorCode::kBusy, "相机正在恢复中"));
@@ -550,8 +555,7 @@ void CameraImpl::grab_loop() {
                 continue;
             }
             sdk_errors_.fetch_add(1, std::memory_order_relaxed);
-            const auto streak =
-                consecutive_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
+            const auto streak = consecutive_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
             if (streak >= kMaxConsecutiveErrors) {
                 // 连续失败意味着链路已坏；交给上层 recover()，线程自行退出。
                 state_.store(hal::DeviceState::kError, std::memory_order_release);
@@ -649,9 +653,9 @@ void CameraImpl::publish_frame(const FrameView& frame) {
 Result<void> CameraImpl::read(hal::FrameLease<hal::ImageFrame>& out, time::Duration timeout) {
     const auto current = state_.load(std::memory_order_acquire);
     if (current != hal::DeviceState::kStreaming || pool_ == nullptr) {
-        return Result<void>(make_error(
-            ErrorCode::kNotOpen,
-            "read() 需要相机处于 streaming 状态，当前: " + std::string(hal::to_string(current))));
+        return Result<void>(
+            make_error(ErrorCode::kNotOpen, "read() 需要相机处于 streaming 状态，当前: " +
+                                                std::string(hal::to_string(current))));
     }
 
     const std::int64_t budget_ns = timeout.nanoseconds();
@@ -668,9 +672,9 @@ Result<void> CameraImpl::read(hal::FrameLease<hal::ImageFrame>& out, time::Durat
 
         const auto now_state = state_.load(std::memory_order_acquire);
         if (now_state != hal::DeviceState::kStreaming) {
-            return Result<void>(make_error(
-                ErrorCode::kNotOpen, "取流已停止，read() 中止，当前状态: " +
-                                         std::string(hal::to_string(now_state))));
+            return Result<void>(
+                make_error(ErrorCode::kNotOpen, "取流已停止，read() 中止，当前状态: " +
+                                                    std::string(hal::to_string(now_state))));
         }
 
         if (budget_ns <= 0 || clock.now().nanoseconds_since_epoch() >= deadline_ns) {
@@ -703,10 +707,9 @@ Result<void> CameraImpl::apply(const hal::CameraTuning& tuning) {
     std::lock_guard<std::mutex> lock(control_mutex_);
     const auto current = state_.load(std::memory_order_acquire);
     if (current != hal::DeviceState::kOpen && current != hal::DeviceState::kStreaming) {
-        return Result<void>(make_error(
-            ErrorCode::kNotOpen,
-            "apply() 需要相机处于 open 或 streaming 状态，当前: " +
-                std::string(hal::to_string(current))));
+        return Result<void>(
+            make_error(ErrorCode::kNotOpen, "apply() 需要相机处于 open 或 streaming 状态，当前: " +
+                                                std::string(hal::to_string(current))));
     }
     if (tuning.empty()) {
         return Result<void>();
@@ -735,8 +738,7 @@ Result<void> CameraImpl::apply(const hal::CameraTuning& tuning) {
         }
         if (tuning.exposure_to_host_latency_ns.has_value()) {
             const auto latency = tuning.exposure_to_host_latency_ns->value_or(0.0);
-            timestamp_config_.exposure_to_host_latency_ns =
-                static_cast<std::int64_t>(latency);
+            timestamp_config_.exposure_to_host_latency_ns = static_cast<std::int64_t>(latency);
             config_.exposure_to_host_latency_ns = latency;
         }
         if (tuning.allow_unsynced_stamp.has_value()) {
@@ -782,15 +784,14 @@ Result<void> CameraImpl::trigger() {
     std::lock_guard<std::mutex> lock(control_mutex_);
     const auto current = state_.load(std::memory_order_acquire);
     if (current != hal::DeviceState::kStreaming) {
-        return Result<void>(make_error(
-            ErrorCode::kNotOpen,
-            "trigger() 需要相机处于 streaming 状态，当前: " +
-                std::string(hal::to_string(current))));
+        return Result<void>(
+            make_error(ErrorCode::kNotOpen, "trigger() 需要相机处于 streaming 状态，当前: " +
+                                                std::string(hal::to_string(current))));
     }
     const auto source = config_.trigger.source.value_or(config_.trigger.mode);
     if (source != hal::TriggerMode::kSoftware) {
-        return Result<void>(make_error(
-            ErrorCode::kNotSupported, "trigger() 仅在 camera.trigger.mode = software 时可用"));
+        return Result<void>(make_error(ErrorCode::kNotSupported,
+                                       "trigger() 仅在 camera.trigger.mode = software 时可用"));
     }
     if (handle_ == nullptr) {
         return Result<void>(make_error(ErrorCode::kInternal, "相机句柄已释放，无法软触发"));

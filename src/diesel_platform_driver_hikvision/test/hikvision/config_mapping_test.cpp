@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -104,10 +105,8 @@ TEST(HikvisionConfigMapping, MapsEverySupportedPixelFormat) {
         const char* name;
     };
     const Case cases[] = {
-        {hal::PixelFormat::kMono8, "Mono8"},
-        {hal::PixelFormat::kBayerRG8, "BayerRG8"},
-        {hal::PixelFormat::kBayerGR8, "BayerGR8"},
-        {hal::PixelFormat::kBayerGB8, "BayerGB8"},
+        {hal::PixelFormat::kMono8, "Mono8"},       {hal::PixelFormat::kBayerRG8, "BayerRG8"},
+        {hal::PixelFormat::kBayerGR8, "BayerGR8"}, {hal::PixelFormat::kBayerGB8, "BayerGB8"},
         {hal::PixelFormat::kBayerBG8, "BayerBG8"},
     };
 
@@ -308,7 +307,8 @@ TEST(HikvisionConfigMapping, GigEOptionalNodesApplied) {
  */
 TEST(HikvisionConfigMapping, OptionalNodeFailuresAreCountedNotFatal) {
     MappingFixture fixture;
-    fixture.api.failing_nodes.emplace(std::string(node::kPacketSize), detail::mvs_error::kAccessDenied);
+    fixture.api.failing_nodes.emplace(std::string(node::kPacketSize),
+                                      detail::mvs_error::kAccessDenied);
     fixture.api.failing_nodes.emplace(std::string(node::kPtpEnable), detail::mvs_error::kSupport);
 
     hal::CameraConfig config;
@@ -433,6 +433,8 @@ TEST(HikvisionConfigMapping, QueryPtpSlaveToleratesMissingNode) {
 /// @brief tick 频率读不到或非正数都归零，时间换算据此降级。
 TEST(HikvisionConfigMapping, QueryTickFrequencyRejectsNonPositive) {
     test::MockMvsApi api;
+    api.failing_nodes[std::string(node::kGevTimestampTickFrequency)] = detail::mvs_error::kSupport;
+    api.failing_nodes[std::string(node::kTimestampTickFrequency)] = detail::mvs_error::kSupport;
     api.int_values[std::string(node::kDeviceTicksFrequency)] = 0;
     EXPECT_EQ(detail::query_tick_frequency(api, nullptr), 0U);
 
@@ -441,6 +443,81 @@ TEST(HikvisionConfigMapping, QueryTickFrequencyRejectsNonPositive) {
 
     api.int_values[std::string(node::kDeviceTicksFrequency)] = 80'000'000;
     EXPECT_EQ(detail::query_tick_frequency(api, nullptr), 80'000'000U);
+}
+
+TEST(HikvisionConfigMapping, TickFrequencyPrefersGigEThenGenericThenLegacy) {
+    test::MockMvsApi api;
+    api.int_values[std::string(node::kGevTimestampTickFrequency)] = 100'000'000;
+    api.int_values[std::string(node::kTimestampTickFrequency)] = 90'000'000;
+    api.int_values[std::string(node::kDeviceTicksFrequency)] = 80'000'000;
+    detail::TickFrequencyDiagnostics report;
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 100'000'000U);
+    api.failing_nodes[std::string(node::kGevTimestampTickFrequency)] = detail::mvs_error::kSupport;
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 90'000'000U);
+    api.failing_nodes[std::string(node::kTimestampTickFrequency)] = detail::mvs_error::kSupport;
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 80'000'000U);
+    EXPECT_EQ(report.read_errors, 0U);
+    EXPECT_EQ(report.invalid_values, 0U);
+}
+
+TEST(HikvisionConfigMapping, TickFrequencyFallsBackOnInvalidValues) {
+    for (const std::int64_t value :
+         {std::int64_t{0}, std::int64_t{-1},
+          static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()) + 1}) {
+        test::MockMvsApi api;
+        api.int_values[std::string(node::kGevTimestampTickFrequency)] = value;
+        api.int_values[std::string(node::kTimestampTickFrequency)] = 80'000'000;
+        detail::TickFrequencyDiagnostics report;
+        EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 80'000'000U);
+        EXPECT_EQ(report.invalid_values, 1U);
+        EXPECT_EQ(report.read_errors, 0U);
+    }
+}
+
+TEST(HikvisionConfigMapping, TickFrequencyAcceptsUint32UpperBound) {
+    test::MockMvsApi api;
+    api.int_values[std::string(node::kGevTimestampTickFrequency)] =
+        std::numeric_limits<std::uint32_t>::max();
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr),
+              std::numeric_limits<std::uint32_t>::max());
+}
+
+TEST(HikvisionConfigMapping, TickFrequencyRecordsErrorsEvenWhenFallbackSucceeds) {
+    for (const auto code : {detail::mvs_error::kAccessDenied, detail::mvs_error::kBusy,
+                            detail::mvs_error::kGcTimeout}) {
+        test::MockMvsApi api;
+        api.failing_nodes[std::string(node::kGevTimestampTickFrequency)] = code;
+        api.int_values[std::string(node::kTimestampTickFrequency)] = 80'000'000;
+        detail::TickFrequencyDiagnostics report;
+        EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 80'000'000U);
+        EXPECT_EQ(report.read_errors, 1U);
+        EXPECT_EQ(static_cast<std::uint32_t>(report.last_vendor_code), code);
+    }
+}
+
+TEST(HikvisionConfigMapping, TickFrequencyAllUnsupportedIsNotAnSdkFailure) {
+    test::MockMvsApi api;
+    for (auto name : {node::kGevTimestampTickFrequency, node::kTimestampTickFrequency,
+                      node::kDeviceTicksFrequency}) {
+        api.failing_nodes[std::string(name)] = detail::mvs_error::kSupport;
+    }
+    detail::TickFrequencyDiagnostics report{9, 9, 9};
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 0U);
+    EXPECT_EQ(report.read_errors, 0U);
+    EXPECT_EQ(report.invalid_values, 0U);
+    EXPECT_EQ(report.last_vendor_code, 0);
+}
+
+TEST(HikvisionConfigMapping, TickFrequencyAllReadFailuresRemainVisible) {
+    test::MockMvsApi api;
+    for (auto name : {node::kGevTimestampTickFrequency, node::kTimestampTickFrequency,
+                      node::kDeviceTicksFrequency}) {
+        api.failing_nodes[std::string(name)] = detail::mvs_error::kGcTimeout;
+    }
+    detail::TickFrequencyDiagnostics report;
+    EXPECT_EQ(detail::query_tick_frequency(api, nullptr, &report), 0U);
+    EXPECT_EQ(report.read_errors, 3U);
+    EXPECT_EQ(static_cast<std::uint32_t>(report.last_vendor_code), detail::mvs_error::kGcTimeout);
 }
 
 } // namespace

@@ -56,11 +56,10 @@ bool wait_for_state(detail::CameraImpl& camera, hal::DeviceState wanted,
 }
 
 /// @brief 反复读直到拿到帧；`kNotOpen` 之类的状态错误立刻返回。
-Result<void> read_until_frame(detail::CameraImpl& camera,
-                              hal::FrameLease<hal::ImageFrame>& lease,
+Result<void> read_until_frame(detail::CameraImpl& camera, hal::FrameLease<hal::ImageFrame>& lease,
                               int attempts = 300) {
-    Result<void> last = Result<void>::failure(
-        make_error(ErrorCode::kInternal, "read_until_frame: 没有尝试过"));
+    Result<void> last =
+        Result<void>::failure(make_error(ErrorCode::kInternal, "read_until_frame: 没有尝试过"));
     for (int attempt = 0; attempt < attempts; ++attempt) {
         last = camera.read(lease, time::Duration::from_milliseconds(20));
         if (last.ok()) {
@@ -130,6 +129,24 @@ struct Harness {
 // ---------------------------------------------------------------------------
 // 设备选择
 // ---------------------------------------------------------------------------
+
+TEST(HikvisionCamera, TickFrequencyDiagnosticSurvivesOpenAndClearsOnReopen) {
+    Harness harness;
+    harness.api->failing_nodes[std::string(node::kGevTimestampTickFrequency)] =
+        detail::mvs_error::kGcTimeout;
+    harness.api->int_values[std::string(node::kTimestampTickFrequency)] = 100'000'000;
+    harness.open_ok();
+    ASSERT_NE(harness.camera, nullptr);
+    EXPECT_EQ(harness.camera->stats().sdk_errors, 1U);
+    EXPECT_EQ(static_cast<std::uint32_t>(harness.camera->stats().last_error_vendor_code),
+              detail::mvs_error::kGcTimeout);
+    ASSERT_TRUE(harness.camera->close().ok());
+    harness.api->failing_nodes.erase(std::string(node::kGevTimestampTickFrequency));
+    harness.api->int_values[std::string(node::kGevTimestampTickFrequency)] = 100'000'000;
+    ASSERT_TRUE(harness.camera->open().ok());
+    EXPECT_EQ(harness.camera->stats().sdk_errors, 0U);
+    EXPECT_EQ(harness.camera->stats().last_error_vendor_code, 0);
+}
 
 /// @brief 空 selector 不得默认取第 0 台（HAL 明令禁止）。
 TEST(HikvisionCamera, OpenRejectsEmptySelector) {
@@ -548,7 +565,8 @@ TEST(HikvisionCamera, SetExposureDelegatesToApply) {
 TEST(HikvisionCamera, ApplyFailureKeepsVendorCode) {
     Harness harness;
     harness.open_ok();
-    harness.api->failing_nodes.emplace(std::string(node::kExposureTime), detail::mvs_error::kAccessDenied);
+    harness.api->failing_nodes.emplace(std::string(node::kExposureTime),
+                                       detail::mvs_error::kAccessDenied);
 
     hal::CameraTuning tuning;
     tuning.exposure_us = std::optional<double>(1234.0);

@@ -405,6 +405,18 @@ MVS 侧可用信息：
 `tick_freq` 读不到时：`device_tick_frequency_hz = 0`、`device_time_ns = 0`，
 `sync` 至少降为 `kHostReceive`，绝不假装「设备时间可用」。
 
+### 2026-11-14 设备频率查询与诊断（PR #6修订）
+
+频率按 `GevTimestampTickFrequency` → `TimestampTickFrequency` →
+`DeviceTicksFrequency` 顺序查询，只接受大于0且不超uint32上限的值。
+此前MV-CS004-10GC记录的有效节点为GigE节点、频率100MHz；本次不重新进行硬件测试。
+
+节点返回 `MV_E_SUPPORT` 视为型号兼容回退，不增加SDK错误数。权限、忙、超时等其他
+读取失败会保留原始厂商码并增加 `CameraStats.sdk_errors`，即使后备节点成功也不抹除。
+读取成功但值非法单独统计，并计入SDK异常总数；不伪造厂商错误码。
+新一次打开在配置前清零诊断，避免配置阶段发现的问题被成功路径清掉。
+所有节点不可用时仍使用现有时间降级，不把计数频率读取成功宣称为跨设备同步。
+
 ## 8. 错误映射
 
 | MVS 返回码 | `ErrorCode` |

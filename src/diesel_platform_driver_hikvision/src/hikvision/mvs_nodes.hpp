@@ -47,6 +47,8 @@ inline constexpr std::string_view kPacketSize = "GevSCPSPacketSize";
 inline constexpr std::string_view kPacketDelay = "GevSCPD";
 inline constexpr std::string_view kHeartbeatTimeout = "GevHeartbeatTimeout";
 inline constexpr std::string_view kDeviceTicksFrequency = "DeviceTicksFrequency";
+inline constexpr std::string_view kGevTimestampTickFrequency = "GevTimestampTickFrequency";
+inline constexpr std::string_view kTimestampTickFrequency = "TimestampTickFrequency";
 
 } // namespace node
 
@@ -76,8 +78,20 @@ Result<void> apply_tuning(MvsApi& api, void* handle, const hal::CameraTuning& tu
 /// @brief `GevIEEE1588Status == "Slave"`；节点不存在或读取失败都返回 false。
 bool query_ptp_slave(MvsApi& api, void* handle) noexcept;
 
-/// @brief 设备 tick 频率；读不到返回 0（时间换算据此降级）。
-std::uint32_t query_tick_frequency(MvsApi& api, void* handle) noexcept;
+/// @brief 本次频率探测的诊断；节点不支持不计错，非法数值单独计数。
+struct TickFrequencyDiagnostics {
+    std::uint32_t read_errors = 0;
+    std::uint32_t invalid_values = 0;
+    std::int32_t last_vendor_code = 0;
+};
+
+/**
+ * @brief 按GigE、通用、旧节点顺序读取正数且不超uint32范围的tick频率。
+ * 全部不可用时返回0，允许时间换算降级；diagnostics非空时覆盖为本次查询结果。
+ * 后备节点成功不会抹掉此前的读取错误，便于现场诊断。
+ */
+std::uint32_t query_tick_frequency(MvsApi& api, void* handle,
+                                   TickFrequencyDiagnostics* diagnostics = nullptr) noexcept;
 
 /**
  * @brief 由相机配置与设备实况合成时间戳配置。
